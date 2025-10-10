@@ -1,36 +1,48 @@
-**Live app:** https://quant-insight-dashboard-cq4skayqidv5vnmysogrcz.streamlit.app
-# 📈 Quant Insight Dashboard
+[![Live Demo — Streamlit](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://quant-insight-dashboard-cq4skayqidv5vnmysogrcz.streamlit.app)
 
-Interactive Streamlit app to analyze **performance, volatility, correlation, and beta** for any set of tickers (stocks/ETFs).
+# Quant Insight Dashboard
 
-### Live Demo
-Deploy easily on **Streamlit Community Cloud** (connect this repo → set `app/main.py`).  
-*(Add your live link here once deployed.)*
+Interactive Streamlit web app for analyzing **performance, volatility, correlation, and risk metrics** of financial assets (stocks, ETFs, indices).
 
 ---
 
 ## ✨ Features
 
-- **Prices**: Adjusted close prices with range slider  
-- **Performance**: Cumulative returns, KPI cards (Return & Sharpe), Sharpe–Volatility scatter  
-- **Volatility**: Rolling annualized vol (window selectable)  
-- **Correlation**: Ordered heatmap + Top Positive/Negative pairs + Pairwise rolling corr  
-- **Beta**: Rolling CAPM beta vs selected benchmark (default: SPY)  
-- **Export**: CSV and one-click HTML report  
-- **Presets**: Quick ticker sets (US Tech, Benchmarks, FAANG+)  
-- **Save/Load**: Export/import configuration JSON  
-- **Optional**: Sector coloring on scatter (best-effort via Yahoo)  
-- **Caching**: Fast reloads with Streamlit cache  
-- **Tests & CI**: `pytest` + GitHub Actions
+- **Prices** — Adjusted close prices with interactive range slider  
+- **Performance** — Cumulative returns, KPI cards (Return & Sharpe), and Risk vs Return scatter with regression line  
+- **Volatility** — Rolling annualized volatility (customizable window)  
+- **Correlation** — Ordered correlation heatmap + Top positive/negative pairs + Pairwise rolling correlation  
+- **Beta** — Rolling CAPM β vs selected benchmark (default = SPY)  
+- **Export** — One-click CSV and HTML report download  
+- **Presets** — Quick ticker sets (US Tech, Benchmarks, FAANG+)  
+- **Save / Load** — Export or import full setup in JSON  
+- **Optional** — Sector coloring on scatter (best-effort via Yahoo Finance)  
+- **Caching** — Fast reloads using Streamlit cache  
+- **Tests & CI** — `pytest` + GitHub Actions integration  
 
 ---
 
-## 🚀 Quickstart
+## 🚀 Quickstart (run locally)
+
+Clone the repository and launch the app in your local environment.
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/riccardo-ugo-alberti/quant-insight-dashboard.git
 cd quant-insight-dashboard
+
+# Create and activate a virtual environment
 python -m venv .venv
-.venv\Scripts\activate        # Windows
+.\.venv\Scripts\activate        # Windows
+# source .venv/bin/activate     # macOS / Linux
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Run the app
 streamlit run app/main.py
+## 📊 Screenshots
+
+![Dashboard (Performance)](docs/screenshot_main.png)
+
+![Correlation Heatmap](docs/screenshot_snapshot.png)
+
