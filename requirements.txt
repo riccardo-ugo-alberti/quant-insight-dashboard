@@ -5,3 +5,5 @@ plotly
 streamlit
 scipy          # optional but used for correlation ordering; safe to keep
 pytest         # for tests / CI
+statsmodels>=0.14
+matplotlib>=3.8
