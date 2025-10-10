@@ -19,7 +19,7 @@ from src.visuals import (
     price_lines, cumret_lines, rolling_vol_lines, beta_lines,
     corr_heatmap, rolling_corr_line, sharpe_vol_scatter,
     kpi_card, bar_annual_return, bar_annual_vol,
-    style_summary_table, style_corr_pairs_table, style_prices_preview,  # from previous version
+    style_summary_table, style_corr_pairs_table, style_prices_preview,
     rolling_sharpe_lines, drawdown_area
 )
 from src.meta import get_sectors
@@ -144,7 +144,6 @@ try:
                                      f"{summary.loc[worst_dd,'Max Drawdown']:.2%}",
                                      f"Return {summary.loc[worst_dd,'Ann. Return']:.2%}",
                                      -abs(summary.loc[worst_dd,'Max Drawdown'])))
-            from src.visuals import cumret_lines
             st.plotly_chart(cumret_lines(cum, "Cumulative performance (base=100)", height=520), use_container_width=True)
             st.caption("Cumulative total return indexed to 100 at the start date.")
 
@@ -159,8 +158,6 @@ try:
         st.caption("Adjusted close prices for each selected asset across the chosen period.")
 
     with tab2:
-        from src.visuals import sharpe_vol_scatter, bar_annual_return, bar_annual_vol
-        from src.visuals import cumret_lines
         st.plotly_chart(cumret_lines(cum, height=560), use_container_width=True)
         st.caption("Cumulative return per asset (base=100), allowing a clean relative performance comparison.")
         st.plotly_chart(sharpe_vol_scatter(summary, sectors, height=560, trendline=True), use_container_width=True)

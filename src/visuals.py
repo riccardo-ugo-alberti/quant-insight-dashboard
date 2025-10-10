@@ -197,3 +197,29 @@ def drawdown_area(dd: pd.DataFrame, ticker: str, height: int = 420) -> go.Figure
         yaxis=dict(tickformat=".0%")
     )
     return fig
+
+# ---------- Table styling (light, professional) ----------
+def _base_style(s: pd.io.formats.style.Styler) -> pd.io.formats.style.Styler:
+    s = s.set_properties(**{"border": "1px solid #DDD", "border-collapse": "collapse"})
+    s = s.set_table_styles([{"selector": "th", "props": [("background-color", "#F7F7F7")]}])
+    return s
+
+def style_summary_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+    s = df.style.format({
+        "Ann. Return": "{:.2%}",
+        "Ann. Vol": "{:.2%}",
+        "Sharpe": "{:.2f}",
+        "Sortino": "{:.2f}",
+        "Max Drawdown": "{:.2%}",
+        "Longest DD (days)": "{:.0f}",
+        "Recovery (days)": "{:.0f}",
+    })
+    return _base_style(s)
+
+def style_corr_pairs_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+    s = df.style.format({"rho": "{:.2f}"})
+    return _base_style(s)
+
+def style_prices_preview(df: pd.DataFrame) -> pd.io.formats.style.Styler:
+    s = df.tail().style.format("{:.2f}")
+    return _base_style(s)
