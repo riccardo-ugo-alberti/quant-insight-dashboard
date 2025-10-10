@@ -40,3 +40,4 @@ streamlit run app/main.py
 
 ![Correlation Heatmap](docs/screenshot_snapshot.png)
 
+[![Release](https://img.shields.io/github/v/release/riccardo-ugo-alberti/quant-insight-dashboard?label=Latest%20release)](https://github.com/riccardo-ugo-alberti/quant-insight-dashboard/releases)
