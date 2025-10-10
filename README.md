@@ -1,3 +1,4 @@
+**Live app:** https://quant-insight-dashboard-cq4skayqidv5vnmysogrcz.streamlit.app
 # 📈 Quant Insight Dashboard
 
 Interactive Streamlit app to analyze **performance, volatility, correlation, and beta** for any set of tickers (stocks/ETFs).
