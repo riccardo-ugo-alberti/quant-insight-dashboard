@@ -29,7 +29,6 @@ def _tweak(fig: go.Figure, *, height: int | None = None, show_slider: bool = Tru
     fig.update_xaxes(rangeslider_visible=show_slider)
     return fig
 
-
 # ---------- KPI helpers ----------
 def kpi_delta_color(delta_value: float) -> str:
     return "normal" if delta_value >= 0 else "inverse"
@@ -41,7 +40,6 @@ def kpi_card(label: str, value_str: str, delta_str: str | None = None, delta_val
         if delta_val is not None:
             kw["delta_color"] = kpi_delta_color(delta_val)
     return kw
-
 
 # ---------- Price / Performance ----------
 def price_lines(prices: pd.DataFrame, height: int = 520) -> go.Figure:
@@ -61,7 +59,6 @@ def cumret_lines(cum: pd.DataFrame, title: str = "Cumulative Returns (base=100)"
         title=title
     )
     return _tweak(fig, height=height)
-
 
 # ---------- Risk ----------
 def rolling_vol_lines(vol: pd.DataFrame, window: int, height: int = 520) -> go.Figure:
@@ -83,14 +80,13 @@ def beta_lines(betas: pd.DataFrame, benchmark: str, window: int, height: int = 5
     )
     return _tweak(fig, height=height)
 
-
 # ---------- Correlation ----------
 def corr_heatmap(cm: pd.DataFrame, title: str = "Correlation (daily returns)", height: int = 560) -> go.Figure:
     z = cm.values
     text = [[f"{v:.2f}" for v in row] for row in z]
     fig = go.Figure(data=go.Heatmap(
         z=z, x=cm.columns, y=cm.index,
-        colorscale=RDBU_CLASSIC,  # vivid RdBu palette
+        colorscale=RDBU_CLASSIC,
         reversescale=False, zmin=-1, zmax=1, zmid=0,
         colorbar=dict(title="ρ"),
         text=text, texttemplate="%{text}", textfont=dict(size=10)
@@ -108,10 +104,8 @@ def rolling_corr_line(rc: pd.Series, a: str, b: str, window: int, height: int = 
     )
     return _tweak(fig, height=height)
 
-
 # ---------- Scatter + Bars ----------
 def _ols_line(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Fit OLS y ~ x and return (x_line, y_line) spanning the full x-range."""
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     X = sm.add_constant(x)
@@ -123,11 +117,9 @@ def _ols_line(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def sharpe_vol_scatter(summary: pd.DataFrame, sectors: dict[str, str] | None = None,
                        height: int = 560, trendline: bool = True) -> go.Figure:
     df = summary.reset_index().rename(columns={"index": "Ticker"})
+    color = "Sector" if sectors else None
     if sectors:
         df["Sector"] = df["Ticker"].map(sectors).fillna("Other")
-        color = "Sector"
-    else:
-        color = None
 
     fig = px.scatter(
         df, x="Ann. Vol", y="Ann. Return",
@@ -143,13 +135,12 @@ def sharpe_vol_scatter(summary: pd.DataFrame, sectors: dict[str, str] | None = N
         fig.add_trace(go.Scatter(
             x=x_line, y=y_line, mode="lines",
             line=dict(color="rgba(44,62,80,0.4)", width=2, dash="dash"),
-            name="OLS regression",   # <--- now visible in legend
+            name="OLS regression",
             hoverinfo="skip",
-            showlegend=True          # <--- legend ON
+            showlegend=True
         ))
 
     return _tweak(fig, height=height, show_slider=False)
-
 
 def bar_annual_return(summary: pd.DataFrame, height: int = 420) -> go.Figure:
     df = summary["Ann. Return"].sort_values(ascending=False).to_frame().reset_index()
@@ -173,37 +164,36 @@ def bar_annual_vol(summary: pd.DataFrame, height: int = 420) -> go.Figure:
     fig.update_yaxes(tickformat=".0%")
     return _tweak(fig, height=height, show_slider=False)
 
+# ---------- NEW: Analytics visuals ----------
+def rolling_sharpe_lines(rs: pd.DataFrame, height: int = 520) -> go.Figure:
+    fig = px.line(
+        rs, x=rs.index, y=rs.columns,
+        color_discrete_sequence=PALETTE_SEQ,
+        labels={"x": "Date", "value": "Rolling Sharpe", "variable": "Ticker"},
+        title="Rolling Sharpe Ratio"
+    )
+    return _tweak(fig, height=height)
 
-# ---------- TABLE STYLES (refined neutral version) ----------
-HEADER_BG = "#f9f9f9"
-BORDER_COLOR = "#e0e0e0"
-ZEBRA_BG = "#fafafa"
-
-def _zebra(rows: pd.DataFrame) -> pd.DataFrame:
-    styles = pd.DataFrame("", index=rows.index, columns=rows.columns)
-    styles.loc[rows.index[::2], :] = f"background-color: {ZEBRA_BG};"
-    return styles
-
-def _base_style(df: pd.DataFrame) -> pd.io.formats.style.Styler:
-    return (df.style
-            .set_table_styles([
-                {"selector": "th.col_heading", "props": [("background-color", HEADER_BG), ("font-weight", "600")]},
-                {"selector": "th.row_heading", "props": [("background-color", HEADER_BG), ("font-weight", "600")]},
-                {"selector": "td, th", "props": [("border", f"1px solid {BORDER_COLOR}"), ("padding", "6px 8px")]},
-            ])
-            .apply(_zebra, axis=None))
-
-def style_summary_table(summary: pd.DataFrame) -> pd.io.formats.style.Styler:
-    fmt = {
-        "Ann. Return": "{:.2%}",
-        "Ann. Vol": "{:.2%}",
-        "Sharpe": "{:.2f}",
-        "Max Drawdown": "{:.2%}",
-    }
-    return _base_style(summary).format(fmt)
-
-def style_corr_pairs_table(df_pairs: pd.DataFrame) -> pd.io.formats.style.Styler:
-    return _base_style(df_pairs).format({"rho": "{:.2f}"})
-
-def style_prices_preview(df: pd.DataFrame) -> pd.io.formats.style.Styler:
-    return _base_style(df.tail(20)).format(precision=2)
+def drawdown_area(dd: pd.DataFrame, ticker: str, height: int = 420) -> go.Figure:
+    if ticker not in dd.columns:
+        raise ValueError(f"{ticker} not found in drawdown series.")
+    s = dd[ticker].fillna(0.0)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=s.index, y=s.values, mode="lines",
+        line=dict(color="rgba(52, 73, 94, 0.9)", width=1.5),
+        name=f"Drawdown — {ticker}"
+    ))
+    fig.add_trace(go.Scatter(
+        x=s.index, y=np.minimum(s.values, 0.0),
+        fill="tozeroy", mode="none",
+        fillcolor="rgba(52, 73, 94, 0.25)",
+        name="Drawdown area"
+    ))
+    fig.update_layout(
+        title=f"Drawdown (peak-to-trough) — {ticker}",
+        template=TEMPLATE, height=height,
+        margin=dict(l=10, r=10, t=50, b=10),
+        yaxis=dict(tickformat=".0%")
+    )
+    return fig

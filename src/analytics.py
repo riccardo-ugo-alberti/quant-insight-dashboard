@@ -1,105 +1,184 @@
 # src/analytics.py
+from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-TRADING_DAYS = 252
-
+# -----------------------
+# Core transforms
+# -----------------------
 def to_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return prices.sort_index().pct_change().dropna(how="all")
+    rets = prices.sort_index().pct_change().dropna(how="all")
+    return rets
 
-def to_cum_returns(returns: pd.DataFrame, start_at_100: bool = True) -> pd.DataFrame:
-    cum = (1 + returns).cumprod()
-    if start_at_100:
-        cum = cum * 100
-    return cum
+def to_cum_returns(rets: pd.DataFrame) -> pd.DataFrame:
+    return (1 + rets).cumprod() * 100  # base=100
 
-def rolling_vol(returns: pd.DataFrame, window: int = 21) -> pd.DataFrame:
-    return returns.rolling(window).std() * np.sqrt(TRADING_DAYS)
+# -----------------------
+# Risk & rolling
+# -----------------------
+def rolling_vol(rets: pd.DataFrame, window: int = 63) -> pd.DataFrame:
+    return rets.rolling(window).std() * np.sqrt(252)
 
-def corr_matrix(returns: pd.DataFrame) -> pd.DataFrame:
-    return returns.corr()
+def corr_matrix(rets: pd.DataFrame) -> pd.DataFrame:
+    return rets.corr()
 
-def rolling_corr(returns: pd.DataFrame, a: str, b: str, window: int = 63) -> pd.Series:
-    return returns[a].rolling(window).corr(returns[b])
+def order_corr_matrix(corr: pd.DataFrame) -> pd.DataFrame:
+    # simple ordering by mean corr (cluster-ish look without scipy)
+    order = corr.mean().sort_values(ascending=False).index
+    return corr.loc[order, order]
 
-def order_corr_matrix(cm: pd.DataFrame) -> pd.DataFrame:
+def rolling_corr(rets: pd.DataFrame, a: str, b: str, window: int = 63) -> pd.Series:
+    return rets[a].rolling(window).corr(rets[b])
+
+# -----------------------
+# Drawdowns
+# -----------------------
+def drawdown_series(rets: pd.DataFrame) -> pd.DataFrame:
+    """Return drawdown series (cumprod vs running max) for each column."""
+    growth = (1 + rets).cumprod()
+    peak = growth.cummax()
+    dd = (growth / peak) - 1.0
+    return dd
+
+def max_drawdown(rets: pd.DataFrame) -> pd.Series:
+    dd = drawdown_series(rets)
+    return dd.min()
+
+def longest_drawdown_days(rets: pd.DataFrame) -> pd.Series:
+    """Longest consecutive days under water (drawdown < 0)."""
+    dd = drawdown_series(rets)
+    out = {}
+    for c in dd.columns:
+        under = dd[c] < 0
+        # run-length encoding of consecutive True blocks
+        max_len = 0
+        cur = 0
+        for v in under.to_numpy():
+            if v:
+                cur += 1
+                max_len = max(max_len, cur)
+            else:
+                cur = 0
+        out[c] = int(max_len)
+    return pd.Series(out)
+
+def recovery_days_from_max_dd(rets: pd.DataFrame) -> pd.Series:
     """
-    Reorder correlation matrix to group similar assets.
-    Try hierarchical clustering via scipy if available;
-    otherwise fallback to sorting by first eigenvector (PCA-like).
+    Days from the trough of the *maximum* drawdown to the next recovery (dd back to 0).
+    If never recovered, returns NaN.
     """
-    try:
-        from scipy.cluster.hierarchy import linkage, leaves_list
-        from scipy.spatial.distance import squareform
-        dist = 1 - cm.values
-        z = linkage(squareform(dist, checks=False), method="average")
-        order = leaves_list(z)
-        ordered = cm.iloc[order, :].iloc[:, order]
-        ordered.index = cm.index[order]
-        ordered.columns = cm.columns[order]
-        return ordered
-    except Exception:
-        vals, vecs = np.linalg.eigh(cm.values)
-        first = vecs[:, -1]
-        order = np.argsort(first)
-        ordered = cm.iloc[order, :].iloc[:, order]
-        ordered.index = cm.index[order]
-        ordered.columns = cm.columns[order]
-        return ordered
+    dd = drawdown_series(rets)
+    out = {}
+    for c in dd.columns:
+        s = dd[c].dropna()
+        if s.empty:
+            out[c] = np.nan
+            continue
+        trough_idx = s.idxmin()  # date of max drawdown
+        # find next date where drawdown returns to (approximately) 0
+        recovered = s.loc[trough_idx:].pipe(lambda x: x[np.isclose(x, 0.0, atol=1e-10) | (x >= -1e-12)])
+        if recovered.empty:
+            out[c] = np.nan
+        else:
+            out[c] = (recovered.index[0] - trough_idx).days
+    return pd.Series(out)
 
-def summary_table(returns: pd.DataFrame, rf: float = 0.0) -> pd.DataFrame:
+# -----------------------
+# Sharpe / Sortino / Rolling metrics
+# -----------------------
+def annualize_return(rets: pd.Series) -> float:
+    mu = rets.mean() * 252
+    return float(mu)
+
+def annualize_vol(rets: pd.Series) -> float:
+    sigma = rets.std() * np.sqrt(252)
+    return float(sigma)
+
+def sharpe_ratio(rets: pd.Series, rf_annual: float = 0.0) -> float:
+    mu = annualize_return(rets) - rf_annual
+    sig = annualize_vol(rets)
+    return float(mu / sig) if sig and not np.isclose(sig, 0) else np.nan
+
+def sortino_ratio(rets: pd.Series, rf_annual: float = 0.0) -> float:
+    # downside deviation uses negative *excess* returns
+    rf_daily = rf_annual / 252.0
+    excess = rets - rf_daily
+    negatives = excess[excess < 0]
+    if len(negatives) == 0:
+        return np.nan
+    downside_vol_annual = negatives.std() * np.sqrt(252)
+    mu_excess_annual = excess.mean() * 252
+    return float(mu_excess_annual / downside_vol_annual) if downside_vol_annual and not np.isclose(downside_vol_annual, 0) else np.nan
+
+def rolling_sharpe(rets: pd.DataFrame, window: int = 63, rf_annual: float = 0.0) -> pd.DataFrame:
+    rf_daily = rf_annual / 252.0
+    excess = rets - rf_daily
+    mu = excess.rolling(window).mean() * 252
+    sigma = rets.rolling(window).std() * np.sqrt(252)
+    rs = mu / sigma
+    return rs
+
+def rolling_drawdown(rets: pd.DataFrame) -> pd.DataFrame:
+    """Drawdown level over time (same as drawdown_series, kept for clarity)."""
+    return drawdown_series(rets)
+
+# -----------------------
+# Rolling beta (CAPM)
+# -----------------------
+def rolling_beta(rets: pd.DataFrame, benchmark: str, window: int = 63) -> pd.DataFrame:
     """
-    Annualized return, volatility, Sharpe, Max Drawdown for each asset.
-    rf is annual risk-free rate in decimal (e.g., 0.02 for 2%).
+    Rolling beta via cov/var per window.
     """
-    n = len(returns)
-    if n == 0:
-        return pd.DataFrame(columns=["Ann. Return","Ann. Vol","Sharpe","Max Drawdown"])
+    if benchmark not in rets:
+        raise ValueError(f"Benchmark {benchmark} not in return columns")
+    out = {}
+    bench = rets[benchmark]
+    for c in rets.columns:
+        cov = rets[c].rolling(window).cov(bench)
+        var = bench.rolling(window).var()
+        out[c] = cov / var
+    return pd.DataFrame(out, index=rets.index)
 
-    ann_ret = (1 + returns).prod() ** (TRADING_DAYS / n) - 1
-    ann_vol = returns.std() * np.sqrt(TRADING_DAYS)
+# -----------------------
+# Summary table
+# -----------------------
+def summary_table(rets: pd.DataFrame, rf: float = 0.0) -> pd.DataFrame:
+    """
+    Returns: Ann. Return, Ann. Vol, Sharpe, Sortino, Max Drawdown, Longest DD (days), Recovery (days)
+    """
+    cols = rets.columns
+    ann_ret = rets.apply(annualize_return, axis=0)
+    ann_vol = rets.apply(annualize_vol, axis=0)
+    sharpe = rets.apply(lambda s: sharpe_ratio(s, rf), axis=0)
+    sortino = rets.apply(lambda s: sortino_ratio(s, rf), axis=0)
+    mdd = max_drawdown(rets)
+    longest_dd = longest_drawdown_days(rets)
+    rec_days = recovery_days_from_max_dd(rets)
 
-    daily_rf = (1 + rf) ** (1 / TRADING_DAYS) - 1
-    excess = returns - daily_rf
-    sharpe = (excess.mean() * TRADING_DAYS) / (returns.std() * np.sqrt(TRADING_DAYS))
-
-    equity = (1 + returns).cumprod()
-    dd = equity / equity.cummax() - 1
-    mdd = dd.min()
-
-    out = pd.DataFrame({
+    df = pd.DataFrame({
         "Ann. Return": ann_ret,
         "Ann. Vol": ann_vol,
         "Sharpe": sharpe,
-        "Max Drawdown": mdd
-    }).round(4)
+        "Sortino": sortino,
+        "Max Drawdown": mdd,
+        "Longest DD (days)": longest_dd.reindex(cols),
+        "Recovery (days)": rec_days.reindex(cols),
+    })
+    return df.sort_index()
 
-    return out.sort_values("Ann. Return", ascending=False)
-
-def top_corr_pairs(cm: pd.DataFrame, k: int = 5):
-    """Return top + and - correlated pairs from a correlation matrix (upper triangle)."""
+# -----------------------
+# Helpers for correlation pairs
+# -----------------------
+def top_corr_pairs(cm: pd.DataFrame, k: int = 5) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Returns two dataframes with columns [a, b, rho] for top + and top - correlations (off-diagonal).
+    """
     pairs = []
     cols = cm.columns
     for i in range(len(cols)):
-        for j in range(i+1, len(cols)):
+        for j in range(i + 1, len(cols)):
             pairs.append((cols[i], cols[j], cm.iloc[i, j]))
-    df = pd.DataFrame(pairs, columns=["A", "B", "rho"]).dropna()
-    top_pos = df.sort_values("rho", ascending=False).head(k)
-    top_neg = df.sort_values("rho", ascending=True).head(k)
-    return top_pos, top_neg
-
-def rolling_beta(returns: pd.DataFrame, benchmark: str, window: int = 63) -> pd.DataFrame:
-    """
-    Rolling CAPM beta for each column versus the chosen benchmark.
-    beta = cov(asset, bench) / var(bench)
-    """
-    if benchmark not in returns.columns:
-        raise ValueError(f"Benchmark '{benchmark}' not in returns columns.")
-    bench = returns[benchmark]
-    var_b = bench.rolling(window).var()
-    betas = {}
-    for col in returns.columns:
-        cov_ab = returns[col].rolling(window).cov(bench)
-        betas[col] = cov_ab / var_b
-    df = pd.DataFrame(betas, index=returns.index)
-    return df
+    df = pd.DataFrame(pairs, columns=["a", "b", "rho"]).dropna()
+    df_pos = df.sort_values("rho", ascending=False).head(k).reset_index(drop=True)
+    df_neg = df.sort_values("rho", ascending=True).head(k).reset_index(drop=True)
+    return df_pos, df_neg

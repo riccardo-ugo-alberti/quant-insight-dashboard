@@ -12,13 +12,15 @@ from src.data_loader import fetch_prices
 from src.analytics import (
     to_returns, to_cum_returns, rolling_vol,
     corr_matrix, rolling_corr, summary_table, order_corr_matrix,
-    top_corr_pairs, rolling_beta
+    top_corr_pairs, rolling_beta,
+    rolling_sharpe, rolling_drawdown
 )
 from src.visuals import (
     price_lines, cumret_lines, rolling_vol_lines, beta_lines,
     corr_heatmap, rolling_corr_line, sharpe_vol_scatter,
     kpi_card, bar_annual_return, bar_annual_vol,
-    style_summary_table, style_corr_pairs_table, style_prices_preview
+    style_summary_table, style_corr_pairs_table, style_prices_preview,  # from previous version
+    rolling_sharpe_lines, drawdown_area
 )
 from src.meta import get_sectors
 from src.report import build_html_report
@@ -31,8 +33,6 @@ st.markdown("---")
 # ---------------- Sidebar ----------------
 with st.sidebar:
     st.header("Controls")
-
-    # FORM — only widgets that participate in submit
     with st.form(key="controls"):
         st.markdown("**Universe**")
         presets = {
@@ -45,15 +45,13 @@ with st.sidebar:
         base_options = sorted(set(sum(presets.values(), [])) | set(default))
 
         tickers = st.multiselect(
-            "Tickers",
-            options=base_options,
-            default=default,
+            "Tickers", options=base_options, default=default,
             help="You can type any Yahoo Finance ticker and press Enter to add it."
         )
         extra = st.text_input("Add tickers (comma-separated)", "")
         if extra.strip():
             tickers += [t.strip().upper() for t in extra.split(",") if t.strip()]
-            tickers = list(dict.fromkeys(tickers))  # deduplicate
+            tickers = list(dict.fromkeys(tickers))
 
         st.markdown("---")
         st.markdown("**Period**")
@@ -63,7 +61,7 @@ with st.sidebar:
 
         st.markdown("---")
         st.markdown("**Parameters**")
-        window = st.slider("Rolling window (days)", 20, 252, 90, 1,  # <-- default 90
+        window = st.slider("Rolling window (days)", 20, 252, 90, 1,
                            help="Used to compute rolling volatility/beta/correlation; plots still span the whole period.")
         rf = st.number_input("Risk-free (annual, %)", min_value=0.0, value=2.0, step=0.1) / 100.0
         benchmark = st.selectbox("Beta benchmark", options=(["SPY"] + [t for t in tickers if t != "SPY"]), index=0)
@@ -78,12 +76,9 @@ with st.sidebar:
 
         run = st.form_submit_button("Run Analysis", type="primary")
 
-    # OUTSIDE the form: save/load
     with st.expander("Save / Load setup"):
         cfg = {"tickers": tickers}
-        st.download_button("Download configuration (JSON)",
-                           data=json.dumps(cfg).encode(),
-                           file_name="qid-config.json")
+        st.download_button("Download configuration (JSON)", data=json.dumps(cfg).encode(), file_name="qid-config.json")
         uploaded = st.file_uploader("Upload configuration (JSON)", type=["json"], label_visibility="collapsed")
         if uploaded:
             try:
@@ -123,13 +118,16 @@ try:
     summary = summary_table(rets, rf=rf)
     sectors = get_sectors(list(prices.columns)) if color_sectors else {}
 
-    # ---- Snapshot (collapsed by default) ----
+    # Pre-compute analytics
+    rs = rolling_sharpe(rets, window=window, rf_annual=rf)
+    dd = rolling_drawdown(rets)
+
+    # Snapshot
     with st.expander("Snapshot (key metrics and cumulative curve)", expanded=False):
         if not summary.empty:
             top_ret = summary["Ann. Return"].idxmax()
             best_sharpe = summary["Sharpe"].idxmax()
             worst_dd = summary["Max Drawdown"].idxmin()
-
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.metric(**kpi_card(f"Top Return — {top_ret}",
@@ -146,36 +144,48 @@ try:
                                      f"{summary.loc[worst_dd,'Max Drawdown']:.2%}",
                                      f"Return {summary.loc[worst_dd,'Ann. Return']:.2%}",
                                      -abs(summary.loc[worst_dd,'Max Drawdown'])))
-
-            st.plotly_chart(cumret_lines(cum, "Cumulative performance (base=100)", height=520),
-                            use_container_width=True)
+            from src.visuals import cumret_lines
+            st.plotly_chart(cumret_lines(cum, "Cumulative performance (base=100)", height=520), use_container_width=True)
             st.caption("Cumulative total return indexed to 100 at the start date.")
 
-    # ---- Tabs ----
+    # Tabs
     st.markdown("### Sections")
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Prices", "Performance", "Volatility", "Correlation", "Data / Export"])
+    tab1, tab2, tabA, tab3, tab4, tab5 = st.tabs([
+        "Prices", "Performance", "Analytics", "Volatility", "Correlation", "Data / Export"
+    ])
 
     with tab1:
         st.plotly_chart(price_lines(prices, height=520), use_container_width=True)
         st.caption("Adjusted close prices for each selected asset across the chosen period.")
 
     with tab2:
+        from src.visuals import sharpe_vol_scatter, bar_annual_return, bar_annual_vol
+        from src.visuals import cumret_lines
         st.plotly_chart(cumret_lines(cum, height=560), use_container_width=True)
         st.caption("Cumulative return per asset (base=100), allowing a clean relative performance comparison.")
-
         st.plotly_chart(sharpe_vol_scatter(summary, sectors, height=560, trendline=True), use_container_width=True)
         st.caption("Annualized return vs annualized volatility. The dashed line is a proper OLS regression fitted on all points.")
-
         b1, b2 = st.columns([1, 1])
         with b1:
             st.plotly_chart(bar_annual_return(summary), use_container_width=True)
-            st.caption("Ranking by annualized return since the beginning of the period.")
         with b2:
             st.plotly_chart(bar_annual_vol(summary), use_container_width=True)
-            st.caption("Ranking by annualized volatility (risk).")
-
         st.markdown("Summary table")
         st.dataframe(style_summary_table(summary), use_container_width=True)
+
+    with tabA:
+        st.subheader("Metrics Summary")
+        st.dataframe(style_summary_table(summary), use_container_width=True)
+        st.markdown("—")
+
+        st.subheader("Rolling Sharpe")
+        st.plotly_chart(rolling_sharpe_lines(rs, height=520), use_container_width=True)
+        st.caption(f"Rolling Sharpe computed over a {window}-day window (annualized).")
+
+        st.subheader("Drawdown (selected ticker)")
+        focus = st.selectbox("Select ticker for drawdown view", options=list(rets.columns))
+        st.plotly_chart(drawdown_area(dd, focus, height=420), use_container_width=True)
+        st.caption("Peak-to-trough drawdown over the full period; area shading emphasizes losses below 0%.")
 
     with tab3:
         st.plotly_chart(rolling_vol_lines(vol, window, height=520), use_container_width=True)
@@ -191,7 +201,6 @@ try:
         st.markdown("Correlation matrix (daily returns)")
         st.plotly_chart(corr_heatmap(cm, height=560), use_container_width=True)
         st.caption("Pearson correlation of daily log-returns—ordered to reveal clusters. Blue = positive, red = negative (classic vivid palette).")
-
         pos, neg = top_corr_pairs(cm_raw, k=5)
         c1, c2 = st.columns(2)
         with c1:
@@ -200,7 +209,6 @@ try:
         with c2:
             st.markdown("Top negative pairs")
             st.dataframe(style_corr_pairs_table(neg), use_container_width=True)
-
         if pair_choice := pair_choice if (pair_choice := pair_choice) != "— none —" else None:
             a, b = [p.strip() for p in pair_choice.split("—")]
             if a in rets.columns and b in rets.columns and a != b:
@@ -214,10 +222,8 @@ try:
         st.subheader("Preview (last rows)")
         st.dataframe(style_prices_preview(prices), use_container_width=True)
         st.caption("Tail of the cleaned price table used in the analysis.")
-
         buf = io.BytesIO(); prices.to_csv(buf); buf.seek(0)
         st.download_button("Download prices (CSV)", data=buf, file_name="prices.csv", mime="text/csv")
-
         figs = {
             "Prices": price_lines(prices),
             "Cumulative Returns": cumret_lines(cum),
