@@ -8,19 +8,13 @@ Interactive Streamlit web app for analyzing **performance, volatility, correlati
 
 ## ✨ Features
 
-- **Prices** — Adjusted close prices with interactive range slider  
-- **Performance** — Cumulative returns, KPI cards (Return & Sharpe), and Risk vs Return scatter with regression line  
-- **Volatility** — Rolling annualized volatility (customizable window)  
-- **Correlation** — Ordered correlation heatmap + Top positive/negative pairs + Pairwise rolling correlation  
-- **Beta** — Rolling CAPM β vs selected benchmark (default = SPY)  
-- **Export** — One-click CSV and HTML report download  
-- **Presets** — Quick ticker sets (US Tech, Benchmarks, FAANG+)  
-- **Save / Load** — Export or import full setup in JSON  
-- **Optional** — Sector coloring on scatter (best-effort via Yahoo Finance)  
-- **Caching** — Fast reloads using Streamlit cache  
-- **Tests & CI** — `pytest` + GitHub Actions integration  
-
----
+- **Performance** — Cumulative returns, KPI cards (Return & Sharpe), Risk–Return scatter with OLS regression
+- **Risk** — Rolling annualised volatility and CAPM beta (customisable window)
+- **Correlation** — Ordered correlation heatmap, Top ± pairs, pairwise rolling correlation
+- **Data** — Prices preview, CSV export, one-click HTML report
+- **UX** — Ticker presets (US Tech, Benchmarks, FAANG+), JSON save/load of the setup
+- **Styling** — Neutral professional tables (zebra/borders), vivid but readable heatmap
+- **Infra** — Streamlit caching, tests with `pytest`, GitHub Actions ready
 
 ## 🚀 Quickstart (run locally)
 
