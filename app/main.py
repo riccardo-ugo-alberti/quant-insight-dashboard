@@ -1,398 +1,178 @@
+# app/main.py
 from __future__ import annotations
-import sys, io, json
-from pathlib import Path
-import numpy as np
-import pandas as pd
+import io
+import json
 import streamlit as st
-
-# --------- PATH / IMPORTS ----------
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import pandas as pd
+import numpy as np
 
 from src.data_loader import fetch_prices
 from src.analytics import (
-    to_returns, to_cum_returns, rolling_vol,
-    corr_matrix, rolling_corr, summary_table, order_corr_matrix,
-    top_corr_pairs, rolling_beta, rolling_sharpe, rolling_drawdown,
+    to_returns, cum_returns, summary_table, simulate_portfolios
 )
-from src.visuals import (
-    # price & perf
-    price_lines, cumret_lines, sharpe_vol_scatter, kpi_card,
-    bar_annual_return, bar_annual_vol,
-    # risk & beta
-    rolling_vol_lines, beta_lines, rolling_sharpe_lines, drawdown_area,
-    # correlation
-    corr_heatmap, rolling_corr_line, style_corr_pairs_table,
-    # tables / styles
-    style_summary_table, style_prices_preview,
-    # optimizer visuals
-    weights_pie, efficient_frontier_plot, equity_curve_plot, weights_area_plot,
-)
-from src.meta import get_sectors
+from src.optimizer import mean_variance_opt, cvar_opt
+from src.factors import get_fama_french, regress_ff
+from src.econ import default_macro
+from src.visuals import style_table, mc_scatter, factor_bars, macro_lines
 from src.report import build_html_report
-from src.optimizer import (
-    optimize_portfolios, efficient_frontier, solve_target_return,
-    backtest_rebalance, annualize_returns_and_cov, OptResult,
-)
 
-# --------- PAGE CONFIG ----------
 st.set_page_config(page_title="Quant Insight Dashboard", layout="wide")
-st.title("Quant Insight Dashboard")
-st.caption("Performance, risk and correlation across equities/ETFs with interpretable, interactive charts.")
-st.markdown("---")
 
-# --------- SIDEBAR CONTROLS ---------
+# ------------------ SIDEBAR ------------------
 with st.sidebar:
-    st.header("Controls")
+    st.header("Parameters")
+    tickers_input = st.text_input("Tickers", "AAPL, MSFT, SPY")
+    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+    window = st.slider("Rolling window (days)", 30, 252, 90)
+    rf = st.number_input("Risk-free (annual, %)", value=2.0, step=0.1) / 100.0
+    bench = st.selectbox("Beta benchmark", options=["SPY", "QQQ", "^GSPC"], index=0)
+    st.checkbox("Color Risk-Return by sector (when available)", value=True, key="sector_color")
 
-    with st.form(key="controls"):
-        st.markdown("**Universe**")
-        presets = {
-            "US Tech": ["AAPL", "MSFT", "NVDA", "GOOGL"],
-            "Benchmarks": ["SPY", "QQQ", "IWM", "TLT", "GLD"],
-            "FAANG+": ["META", "AMZN", "AAPL", "NFLX", "GOOGL", "MSFT"],
-        }
-        preset = st.selectbox("Preset", ["— none —", *presets.keys()])
-        default = presets.get(preset, ["AAPL", "MSFT", "SPY"])
-        base_options = sorted(set(sum(presets.values(), [])) | set(default))
+    st.subheader("Correlation tools")
+    pair_choice = st.selectbox("Pair for rolling correlation", options=["— none —"] + tickers, index=0)
 
-        tickers = st.multiselect(
-            "Tickers",
-            options=base_options,
-            default=default,
-            help="You can type any Yahoo Finance ticker and press Enter to add it."
-        )
-        extra = st.text_input("Add tickers (comma-separated)", "")
-        if extra.strip():
-            tickers += [t.strip().upper() for t in extra.split(",") if t.strip()]
-            tickers = list(dict.fromkeys(tickers))  # dedupe
+    st.button("Run Analysis", type="primary", use_container_width=True)
 
-        st.markdown("---")
-        st.markdown("**Period**")
-        start_date, end_date = st.date_input(
-            "Date range", value=(pd.to_datetime("2020-01-01"), pd.to_datetime("today"))
-        )
-
-        st.markdown("---")
-        st.markdown("**Parameters**")
-        window = st.slider("Rolling window (days)", 20, 252, 90, 1)
-        rf = st.number_input("Risk-free (annual, %)", min_value=0.0, value=2.0, step=0.1) / 100.0
-        benchmark = st.selectbox("Beta benchmark", options=(["SPY"] + [t for t in tickers if t != "SPY"]), index=0)
-        color_sectors = st.checkbox("Color Risk-Return by sector (when available)", value=True)
-
-        st.markdown("---")
-        st.markdown("**Correlation tools**")
-        pair = ["— none —"]
-        if len(tickers) >= 2:
-            pair += [f"{a} — {b}" for i, a in enumerate(tickers) for b in tickers[i+1:]]
-        pair_choice = st.selectbox("Pair for rolling correlation", pair)
-
-        run = st.form_submit_button("Run Analysis", type="primary")
-
-    with st.expander("Save / Load setup"):
-        cfg = {"tickers": tickers}
-        st.download_button("Download configuration (JSON)",
-                           data=json.dumps(cfg).encode(),
-                           file_name="qid-config.json")
-        uploaded = st.file_uploader("Upload configuration (JSON)", type=["json"], label_visibility="collapsed")
-        if uploaded:
-            try:
-                data = json.load(uploaded)
-                if isinstance(data.get("tickers"), list):
-                    tickers[:] = [t.strip().upper() for t in data["tickers"] if t.strip()]
-                    st.success("Configuration loaded. Check controls and click Run.")
-            except Exception as e:
-                st.error(f"Invalid config: {e}")
-
-# --------- DATA FETCH (CACHE) ---------
-@st.cache_data(show_spinner=False)
-def _fetch_cached(tickers_tuple, start_str, end_str):
-    prices_all = fetch_prices(list(tickers_tuple), start=start_str)
-    return prices_all.loc[(prices_all.index >= start_str) & (prices_all.index <= end_str)]
-
-start = start_date.strftime("%Y-%m-%d")
-end = end_date.strftime("%Y-%m-%d")
-
-if not run:
-    st.info("Adjust the controls in the sidebar and click **Run Analysis**.")
+# ------------------ LOAD DATA ------------------
+if len(tickers) == 0:
     st.stop()
 
-if not tickers:
-    st.warning("Please select at least one ticker.")
-    st.stop()
+prices = fetch_prices(tickers, start="2020-01-01")
+returns_d = to_returns(prices, "D")
+summary = summary_table(returns_d, rf=rf)
 
-with st.spinner("Downloading market data..."):
-    prices = _fetch_cached(tuple(tickers), start, end)
-
-# --------- CORE METRICS ---------
-rets = to_returns(prices)
-cum = to_cum_returns(rets)
-vol = rolling_vol(rets, window=window)
-
-cm_raw = corr_matrix(rets)
-cm = order_corr_matrix(cm_raw)
-summary = summary_table(rets, rf=rf)
-
-sectors = get_sectors(list(prices.columns)) if color_sectors else {}
-
-rs = rolling_sharpe(rets, window=window, rf_annual=rf)
-dd = rolling_drawdown(rets)
-
-# --------- SNAPSHOT (KPI + CUM) ---------
-with st.expander("Snapshot (key metrics and cumulative curve)", expanded=False):
-    if not summary.empty:
-        top_ret = summary["Ann. Return"].idxmax()
-        best_sharpe = summary["Sharpe"].idxmax()
-        worst_dd = summary["Max Drawdown"].idxmin()
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric(**kpi_card(f"Top Return — {top_ret}",
-                                 f"{summary.loc[top_ret,'Ann. Return']:.2%}",
-                                 f"Vol {summary.loc[top_ret,'Ann. Vol']:.2%}",
-                                 summary.loc[top_ret,'Ann. Return']))
-        with c2:
-            st.metric(**kpi_card(f"Best Sharpe — {best_sharpe}",
-                                 f"{summary.loc[best_sharpe,'Sharpe']:.2f}",
-                                 f"Vol {summary.loc[best_sharpe,'Ann. Vol']:.2%}",
-                                 summary.loc[best_sharpe,'Sharpe']))
-        with c3:
-            st.metric(**kpi_card(f"Worst MDD — {worst_dd}",
-                                 f"{summary.loc[worst_dd,'Max Drawdown']:.2%}",
-                                 f"Return {summary.loc[worst_dd,'Ann. Return']:.2%}",
-                                 -abs(summary.loc[worst_dd,'Max Drawdown'])))
-
-        st.plotly_chart(cumret_lines(cum, "Cumulative performance (base=100)", height=520),
-                        use_container_width=True, key="cum_snapshot")
-
-st.markdown("### Sections")
-tab_prices, tab_perf, tab_analytics, tab_opt, tab_vol, tab_corr, tab_data = st.tabs([
-    "Prices", "Performance", "Analytics", "Optimizer", "Volatility", "Correlation", "Data / Export"
+# -------------- LAYOUT TABS -------------------
+tabs = st.tabs([
+    "Prices", "Performance", "Volatility", "Correlation",
+    "Optimizer", "Simulator", "Factors", "Macro", "Data / Export"
 ])
 
-# --------- PRICES ---------
-with tab_prices:
-    st.plotly_chart(price_lines(prices, height=520), use_container_width=True, key="price_chart")
-    st.caption("Adjusted close prices for each selected asset across the chosen period.")
+# -------------- PRICES ------------------------
+with tabs[0]:
+    st.subheader("Adjusted prices (normalized)")
+    eq = prices / prices.iloc[0]
+    st.line_chart(eq, use_container_width=True)
+    st.caption("Prices normalized to 1 at the first date. Use the app's controls to change window and risk-free.")
 
-# --------- PERFORMANCE ---------
-with tab_perf:
-    # grafico grande sopra
-    st.plotly_chart(cumret_lines(cum, height=560), use_container_width=True, key="cum_perf")
-    st.caption("Cumulative return per asset (base=100).")
+# -------------- PERFORMANCE -------------------
+with tabs[1]:
+    st.subheader("Cumulative returns")
+    st.line_chart(cum_returns(returns_d), use_container_width=True)
 
-    # scatter con regressione (linea sottile)
-    st.plotly_chart(sharpe_vol_scatter(summary, sectors, height=560, trendline=True),
-                    use_container_width=True, key="sharpe_scatter")
-    st.caption("Annualized return vs volatility. The dashed line is an OLS regression line.")
+    st.subheader("Performance summary")
+    st.plotly_chart(style_table(summary.round(3)), use_container_width=True)
 
-    b1, b2 = st.columns([1, 1])
-    with b1:
-        st.plotly_chart(bar_annual_return(summary), use_container_width=True, key="bar_ret")
-    with b2:
-        st.plotly_chart(bar_annual_vol(summary), use_container_width=True, key="bar_vol")
+# -------------- VOLATILITY --------------------
+with tabs[2]:
+    st.subheader("Rolling annualized volatility")
+    ann = returns_d.rolling(window).std().dropna() * np.sqrt(252)
+    st.line_chart(ann, use_container_width=True)
+    st.caption(f"Rolling window = {window} days; annualization via √252.")
 
-    st.markdown("Summary table")
-    st.dataframe(style_summary_table(summary), use_container_width=True)
+# -------------- CORRELATION -------------------
+with tabs[3]:
+    st.subheader("Correlation matrix (Pearson)")
+    cm = returns_d.corr()
+    st.dataframe(cm.round(2), use_container_width=True)
 
-# --------- ANALYTICS ---------
-with tab_analytics:
-    st.subheader("Metrics Summary")
-    st.dataframe(style_summary_table(summary), use_container_width=True)
-    st.markdown("—")
-
-    st.subheader("Rolling Sharpe")
-    st.plotly_chart(rolling_sharpe_lines(rs, height=520), use_container_width=True, key="roll_sharpe")
-    st.caption(f"Rolling Sharpe with {window}-day window.")
-
-    st.subheader("Drawdown (selected ticker)")
-    focus = st.selectbox("Select ticker for drawdown view", options=list(rets.columns))
-    st.plotly_chart(drawdown_area(dd, focus, height=420), use_container_width=True, key="drawdown")
-
-# --------- OPTIMIZER ---------
-with tab_opt:
-    st.subheader("Mean–Variance Optimizer")
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
+# -------------- OPTIMIZER ---------------------
+with tabs[4]:
+    colL, colR = st.columns([1.2, 1.0])
+    with colL:
+        st.subheader("Mean-Variance Optimizer")
         allow_short = st.checkbox("Allow shorting", value=False)
-        w_max = st.slider("Max weight cap", 0.10, 1.00, 0.30, 0.05)
-    with c2:
-        ef_points = st.slider("Frontier points", 10, 60, 25, 1)
-        rebalance = st.selectbox("Rebalance frequency", ["Monthly", "Quarterly"], index=0)
-        rb_code = "M" if rebalance == "Monthly" else "Q"
-    with c3:
-        turnover_limit = st.slider("Turnover limit per rebalance", 0.0, 1.0, 0.5, 0.05)
-        tc_bps = st.number_input("Transaction costs (bps)", min_value=0.0, value=5.0, step=1.0)
-
-    sect_on = st.checkbox("Apply sector exposure cap", value=False)
-    sector_cap = st.slider("Sector cap (each)", 0.20, 1.00, 0.40, 0.05, disabled=not sect_on)
-    sectors_opt = get_sectors(list(prices.columns)) if sect_on else {}
-
-    mode = st.radio("Optimization mode", ["Max Sharpe", "Min Vol", "Target Return"], horizontal=True)
-    mu_annual = rets.mean() * 252
-    tr_lo, tr_hi = float(np.percentile(mu_annual.values, 10)), float(np.percentile(mu_annual.values, 90))
-    target_ret = st.slider("Target annual return",
-                           float(tr_lo), float(tr_hi),
-                           float(np.clip(mu_annual.mean(), tr_lo, tr_hi)), 0.005,
-                           disabled=(mode != "Target Return"))
-    st.markdown("---")
-
-    try:
-        ef = efficient_frontier(
-            rets, rf=rf,
-            allow_short=allow_short, w_max=w_max,
-            sectors=sectors_opt if sect_on else None,
-            sector_cap=sector_cap if sect_on else None,
-            points=ef_points
-        )
-        results = optimize_portfolios(
-            rets, rf=rf, allow_short=allow_short, w_max=w_max,
-            sectors=sectors_opt if sect_on else None,
-            sector_cap=sector_cap if sect_on else None
-        )
-        res_ms, res_mv = results["max_sharpe"], results["min_vol"]
-        res_tr = None
+        weight_cap = st.slider("Max weight cap", 0.1, 1.0, 0.3, 0.05)
+        mode = st.radio("Optimization mode", ["Max Sharpe", "Min Vol", "Target Return"], horizontal=True)
+        target = None
         if mode == "Target Return":
-            mu, cov = annualize_returns_and_cov(rets)
-            w_tr = solve_target_return(
-                mu, cov, target_ret, allow_short, w_max,
-                sectors=sectors_opt if sect_on else None,
-                sector_cap=sector_cap if sect_on else None
+            target = st.slider("Target annual return", 0.0, 0.5, 0.15, 0.01)
+
+        try:
+            mv = mean_variance_opt(
+                returns_d, mode="min_vol" if mode=="Min Vol" else ("target" if mode=="Target Return" else "max_sharpe"),
+                target_return=target, rf=rf, allow_short=allow_short, weight_cap=weight_cap
             )
-            r_tr = float(w_tr.values @ mu.values)
-            v_tr = float(np.sqrt(max(w_tr.values @ cov.values @ w_tr.values, 0.0)))
-            res_tr = OptResult(weights=w_tr, ann_return=r_tr, ann_vol=v_tr, sharpe=(r_tr - rf) / (v_tr + 1e-12))
+            st.success(f"MV: μ={mv['mu']:.2%}, σ={mv['sigma']:.2%}, Sharpe={mv['sharpe']:.2f}")
+        except Exception as e:
+            st.error(f"MV optimization error: {e}")
+            mv = None
 
-        # KPI tables
-        k1, k2, k3 = st.columns(3)
-        for res, name, col in zip([res_ms, res_mv, res_tr],
-                                  ["Max Sharpe", "Min Vol", "Target Return"], [k1, k2, k3]):
-            with col:
-                if res:
-                    st.markdown(f"**{name}**")
-                    st.metric("Return", f"{res.ann_return:.2%}")
-                    st.metric("Volatility", f"{res.ann_vol:.2%}")
-                    st.metric("Sharpe", f"{res.sharpe:.2f}")
-                    st.dataframe(res.weights.rename("Weight").to_frame().style.format("{:.2%}"),
-                                 use_container_width=True)
+        st.subheader("CVaR Optimizer (ES)")
+        alpha = st.slider("Confidence (1-α)", 0.80, 0.99, 0.95, 0.01)
+        try:
+            cv = cvar_opt(returns_d, alpha=alpha, allow_short=allow_short, weight_cap=weight_cap)
+            st.info(f"CVaR (ES {alpha:.0%}) minimized to: {cv['es']:.3%}")
+        except Exception as e:
+            st.error(f"CVaR optimization error: {e}")
+            cv = None
 
-        # Weights pies
-        p1, p2, p3 = st.columns(3)
-        with p1:
-            st.plotly_chart(weights_pie(res_ms.weights), use_container_width=True, key="pie_ms")
-        with p2:
-            st.plotly_chart(weights_pie(res_mv.weights), use_container_width=True, key="pie_mv")
-        with p3:
-            if res_tr:
-                st.plotly_chart(weights_pie(res_tr.weights), use_container_width=True, key="pie_tr")
+    with colR:
+        st.subheader("Weights")
+        if mv is not None:
+            w = pd.Series(mv["weights"], index=returns_d.columns, name="MV Weights")
+            st.dataframe(w.to_frame().style.format("{:.2%}"), use_container_width=True)
+        if cv is not None:
+            w2 = pd.Series(cv["weights"], index=returns_d.columns, name="CVaR Weights")
+            st.dataframe(w2.to_frame().style.format("{:.2%}"), use_container_width=True)
 
-        # Efficient frontier
-        st.plotly_chart(
-            efficient_frontier_plot(
-                ef,
-                point_ms=(res_ms.ann_vol, res_ms.ann_return),
-                point_mv=(res_mv.ann_vol, res_mv.ann_return),
-                point_tr=((res_tr.ann_vol, res_tr.ann_return) if res_tr else None)
-            ),
-            use_container_width=True,
-            key="ef_plot"
-        )
+# -------------- SIMULATOR (Monte Carlo) -------
+with tabs[5]:
+    st.subheader("Monte Carlo portfolios")
+    n_sims = st.slider("Number of simulations", 100, 10000, 3000, step=100)
+    allow_short = st.checkbox("Allow shorting (MC)", value=False, key="mc_short")
+    weight_cap = st.slider("Weight cap (MC)", 0.1, 1.0, 0.3, 0.05, key="mc_cap")
 
-        # Backtest
-        st.markdown("### Backtest (rebalance)")
-        bt_mode = {"Max Sharpe": "max_sharpe", "Min Vol": "min_vol", "Target Return": "target"}[mode]
-        eq, W = backtest_rebalance(
-            prices, rets, rf,
-            mode=bt_mode, allow_short=allow_short, w_max=w_max,
-            sectors=sectors_opt if sect_on else None,
-            sector_cap=sector_cap if sect_on else None,
-            rebalance=rb_code,
-            target_ret=(target_ret if mode == "Target Return" else None),
-            turnover_limit=turnover_limit,
-            tc_bps=tc_bps
-        )
+    sims = simulate_portfolios(returns_d, n_sims=n_sims, allow_short=allow_short,
+                               weight_cap=weight_cap, rf=rf)
+    st.plotly_chart(mc_scatter(sims, opt_point=None), use_container_width=True)
+    st.caption("Each dot is a random feasible portfolio. Color = Sharpe. Use Optimizer tab for optimal weights.")
 
-        daily_eq_ret = eq.pct_change().fillna(0.0)
-        cagr = (eq.iloc[-1]) ** (252 / len(eq)) - 1.0
-        vol_bt = daily_eq_ret.std() * np.sqrt(252)
-        sharpe_bt = (daily_eq_ret.mean() * 252 - rf) / (vol_bt + 1e-12)
-        dd_bt = (eq / eq.cummax() - 1.0).min()
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("CAGR", f"{cagr:.2%}")
-        m2.metric("Volatility", f"{vol_bt:.2%}")
-        m3.metric("Sharpe", f"{sharpe_bt:.2f}")
-        m4.metric("Max Drawdown", f"{dd_bt:.2%}")
-
-        g1, g2 = st.columns([1.2, 1.0])
-        with g1:
-            st.plotly_chart(equity_curve_plot(eq), use_container_width=True, key="eq_curve")
-        with g2:
-            st.plotly_chart(weights_area_plot(W), use_container_width=True, key="weights_area")
-
-    except Exception as e:
-        st.error(f"Optimizer error: {e}")
-
-# --------- VOLATILITY ---------
-with tab_vol:
-    st.plotly_chart(rolling_vol_lines(vol, window, height=520),
-                    use_container_width=True, key="vol_chart")
-    st.caption("Rolling annualized volatility with selected window.")
+# -------------- FACTORS (Fama–French) ---------
+with tabs[6]:
+    st.subheader("Fama–French factor decomposition")
+    freq = st.radio("Frequency", ["Monthly", "Daily"], horizontal=True)
+    five = st.checkbox("Use 5-Factor model (otherwise 3-Factor)", value=True)
     try:
-        betas = rolling_beta(rets, benchmark=benchmark, window=window)
-        st.plotly_chart(beta_lines(betas, benchmark, window, height=500),
-                        use_container_width=True, key="beta_chart")
+        ff = get_fama_french(freq="M" if freq=="Monthly" else "D", five=five)
+        # Convert asset returns to same frequency
+        r = to_returns(prices, "M" if freq=="Monthly" else "D")
+        # Excess returns (over RF)
+        ex = r.sub(ff["RF"], axis=0, fill_value=0.0)
+        res = regress_ff(ex[returns_d.columns], ff, five=five)
+        st.plotly_chart(style_table(res.round(3), "Loadings / Alpha / R2"), use_container_width=True)
+        st.plotly_chart(factor_bars(res, five=five), use_container_width=True)
     except Exception as e:
-        st.info(f"Beta not available: {e}")
+        st.error(f"Factor regression error: {e}")
+        st.caption("Tip: pandas_datareader 'famafrench' sometimes throttles — retry or switch frequency.")
 
-# --------- CORRELATION ---------
-with tab_corr:
-    st.plotly_chart(corr_heatmap(cm, height=560),
-                    use_container_width=True, key="corr_heat")
-    st.caption("Correlation heatmap (blue=positive, red=negative).")
-    pos, neg = top_corr_pairs(cm_raw, k=5)
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("Top positive pairs")
-        st.dataframe(style_corr_pairs_table(pos), use_container_width=True)
-    with c2:
-        st.markdown("Top negative pairs")
-        st.dataframe(style_corr_pairs_table(neg), use_container_width=True)
+# -------------- MACRO (FRED) ------------------
+with tabs[7]:
+    st.subheader("Macro indicators (FRED)")
+    start = st.date_input("Start date", value=pd.to_datetime("2010-01-01")).strftime("%Y-%m-%d")
+    try:
+        macro = default_macro(start=start)
+        if macro.empty:
+            st.warning("Could not fetch FRED data. Try again later.")
+        else:
+            st.plotly_chart(macro_lines(macro), use_container_width=True)
+            st.dataframe(macro.tail(), use_container_width=True)
+            st.caption("Series: GDPC1 (real GDP, quarterly), CPIAUCSL (CPI), DGS10 (10Y Treasury yield).")
+    except Exception as e:
+        st.error(f"FRED error: {e}")
+        st.caption("If needed, set a FRED API key in Secrets as FRED_API_KEY.")
 
-    if (pair_choice and pair_choice != "— none —"):
-        a, b = [p.strip() for p in pair_choice.split("—")]
-        if a in rets.columns and b in rets.columns:
-            rc = rolling_corr(rets, a, b, window=window)
-            st.plotly_chart(rolling_corr_line(rc, a, b, window, height=480),
-                            use_container_width=True, key="roll_corr")
+# -------------- DATA / EXPORT -----------------
+with tabs[8]:
+    st.subheader("Data snapshots")
+    st.dataframe(prices.tail(), use_container_width=True)
+    st.dataframe(returns_d.tail(), use_container_width=True)
 
-# --------- DATA / EXPORT ---------
-with tab_data:
-    st.subheader("Preview (last rows)")
-    st.dataframe(style_prices_preview(prices), use_container_width=True)
+    st.subheader("Export")
+    csv_buf = io.StringIO()
+    prices.to_csv(csv_buf)
+    st.download_button("Download Prices (CSV)", data=csv_buf.getvalue().encode("utf-8"),
+                       file_name="prices.csv", mime="text/csv", use_container_width=True)
 
-    # CSV
-    buf = io.BytesIO()
-    prices.to_csv(buf)
-    buf.seek(0)
-    st.download_button(
-        label="Download CSV",
-        data=buf,
-        file_name="prices.csv",
-        mime="text/csv",
-        use_container_width=True,
-        key="dl_csv"
-    )
-
-    # ---- HTML report download ----
-html_bytes = build_html_report(prices, summary, cm).getvalue().encode("utf-8")
-st.download_button(
-    label="Download HTML Report",
-    data=html_bytes,
-    file_name="report.html",
-    mime="text/html",
-    use_container_width=True,
-    key="dl_html",
-)
+    html_bytes = build_html_report(prices, summary, returns_d.corr()).getvalue().encode("utf-8")
+    st.download_button("Download HTML Report", data=html_bytes,
+                       file_name="report.html", mime="text/html", use_container_width=True)

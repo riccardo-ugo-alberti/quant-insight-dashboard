@@ -1,9 +1,8 @@
-pandas
-numpy
-yfinance
-plotly>=5.20
-streamlit
-scipy>=1.10          # optional but used for correlation ordering; safe to keep
-pytest         # for tests / CI
+streamlit>=1.36
+pandas>=2.0
+numpy>=1.24
+yfinance>=0.2
+plotly>=5.24
+scipy>=1.11
 statsmodels>=0.14
-matplotlib>=3.8
+pandas-datareader>=0.10
