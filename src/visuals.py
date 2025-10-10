@@ -223,3 +223,43 @@ def style_corr_pairs_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
 def style_prices_preview(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     s = df.tail().style.format("{:.2f}")
     return _base_style(s)
+# ---------- Optimizer visuals ----------
+def weights_pie(weights: pd.Series, height: int = 420) -> go.Figure:
+    df = weights[weights.abs() > 1e-6].sort_values(ascending=False)
+    fig = px.pie(df, values=df.values, names=df.index, title="Portfolio Weights", hole=0.35,
+                 color_discrete_sequence=PALETTE_SEQ)
+    fig.update_layout(template=TEMPLATE, height=height)
+    return fig
+
+def efficient_frontier_plot(frontier: pd.DataFrame, point_ms: tuple[float,float] | None = None,
+                            point_mv: tuple[float,float] | None = None,
+                            point_tr: tuple[float,float] | None = None,
+                            height: int = 520) -> go.Figure:
+    fig = px.line(frontier, x="vol", y="target_ret", title="Efficient Frontier",
+                  labels={"vol": "Volatility", "target_ret": "Return"})
+    fig.update_traces(line=dict(width=2.5))
+    # markers
+    if point_ms:
+        fig.add_trace(go.Scatter(x=[point_ms[0]], y=[point_ms[1]], mode="markers",
+                                 marker=dict(size=10, color="#2ecc71"), name="Max Sharpe"))
+    if point_mv:
+        fig.add_trace(go.Scatter(x=[point_mv[0]], y=[point_mv[1]], mode="markers",
+                                 marker=dict(size=10, color="#e67e22"), name="Min Vol"))
+    if point_tr:
+        fig.add_trace(go.Scatter(x=[point_tr[0]], y=[point_tr[1]], mode="markers",
+                                 marker=dict(size=10, color="#2980b9"), name="Target Ret"))
+    fig.update_layout(template=TEMPLATE, height=height)
+    fig.update_yaxes(tickformat=".1%"); fig.update_xaxes(tickformat=".1%")
+    return fig
+
+def equity_curve_plot(eq: pd.Series, height: int = 420) -> go.Figure:
+    fig = px.line(eq, x=eq.index, y=eq.values, labels={"x": "Date", "y": "Equity"},
+                  title="Backtest Equity Curve (rebalanced)")
+    return _tweak(fig, height=height, show_slider=True)
+
+def weights_area_plot(W: pd.DataFrame, height: int = 420) -> go.Figure:
+    fig = px.area(W, x=W.index, y=W.columns, title="Weights over time",
+                  labels={"value": "Weight", "variable": "Ticker"},
+                  color_discrete_sequence=PALETTE_SEQ)
+    fig.update_yaxes(tickformat=".0%")
+    return _tweak(fig, height=height)

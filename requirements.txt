@@ -1,9 +1,9 @@
 pandas
 numpy
 yfinance
-plotly
+plotly>=5.20
 streamlit
-scipy          # optional but used for correlation ordering; safe to keep
+scipy>=1.10          # optional but used for correlation ordering; safe to keep
 pytest         # for tests / CI
 statsmodels>=0.14
 matplotlib>=3.8
