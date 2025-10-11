@@ -1,102 +1,246 @@
 # src/optimizer.py
 from __future__ import annotations
+
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass
+from typing import Tuple, Optional, Literal, List
 from scipy.optimize import minimize
 
-# -------------------------------------------------
-# Mean–Variance (Markowitz) + CVaR (Expected Shortfall) via SLSQP
-# Nessuna dipendenza pesante: funziona su Streamlit Cloud "as is".
-# -------------------------------------------------
+try:
+    import cvxpy as cp  # optional, used for CVaR
+    _HAS_CVXPY = True
+except Exception:
+    _HAS_CVXPY = False
 
-def _constraints(n: int, allow_short: bool, weight_cap: float | None):
+
+# ---------- Helpers
+
+def _to_numpy(x) -> np.ndarray:
+    return np.asarray(x, dtype=float)
+
+
+def _annualize_mean(mu_daily: pd.Series) -> pd.Series:
+    # geometric annualization of mean daily return
+    return (1.0 + mu_daily).pow(252).sub(1.0)
+
+
+def _annualize_cov(cov_daily: pd.DataFrame) -> pd.DataFrame:
+    return cov_daily * 252.0
+
+
+@dataclass
+class MVInputs:
+    """Inputs for mean-variance."""
+    mu: pd.Series          # annualized expected returns
+    cov: pd.DataFrame      # annualized covariance
+    tickers: List[str]
+
+
+def prepare_mv_inputs(prices: pd.DataFrame) -> MVInputs:
+    """
+    From a price DataFrame (index: date, cols: tickers) create annualized
+    expected returns and covariance for MV optimization.
+    """
+    # daily % returns (drop the first NaN row)
+    rets = prices.pct_change().dropna(how="all")
+    mu_d = rets.mean()
+    cov_d = rets.cov()
+
+    mu = _annualize_mean(mu_d)
+    cov = _annualize_cov(cov_d)
+
+    tickers = list(prices.columns)
+    # guard: drop columns with all-NaN or zero variance
+    ok = cov.columns[(np.diag(cov.values) > 0)]
+    mu = mu.loc[ok]
+    cov = cov.loc[ok, ok]
+    return MVInputs(mu=mu, cov=cov, tickers=list(ok))
+
+
+def _portfolio_stats(w: np.ndarray, mu: pd.Series, cov: pd.DataFrame, rf: float = 0.0) -> Tuple[float, float, float]:
+    """Return (exp_return, vol, sharpe). rf in decimal, annualized."""
+    w = _to_numpy(w)
+    exp_return = float(np.dot(w, mu.values))
+    vol = float(np.sqrt(w @ cov.values @ w))
+    sharpe = (exp_return - rf) / vol if vol > 0 else -np.inf
+    return exp_return, vol, sharpe
+
+
+def _mv_optimize(
+    mu: pd.Series,
+    cov: pd.DataFrame,
+    rf: float = 0.0,
+    mode: Literal["max_sharpe", "min_vol", "target_return"] = "max_sharpe",
+    target_return: Optional[float] = None,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+    w0: Optional[np.ndarray] = None,
+) -> Tuple[pd.Series, Tuple[float, float, float]]:
+    """
+    Core MV optimizer (SLSQP). Returns (weights Series, (ret, vol, sharpe)).
+    """
+    n = len(mu)
+    if n == 0:
+        raise ValueError("No assets available after preprocessing.")
+
+    # bounds
+    lo = -max_weight if shorting else 0.0
+    hi = max_weight
+    bnds = [(lo, hi) for _ in range(n)]
+
+    # constraints: sum w = 1
     cons = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    if allow_short:
-        lo, hi = (-1.0, 1.0)
-    else:
-        lo, hi = (0.0, 1.0)
-    if weight_cap is not None:
-        hi = min(hi, weight_cap)
-    bounds = [(lo, hi)] * n
-    return cons, bounds
 
-def mean_variance_opt(returns: pd.DataFrame, mode: str = "max_sharpe",
-                      target_return: float | None = None,
-                      rf: float = 0.0, allow_short: bool = False,
-                      weight_cap: float | None = 0.3,
-                      periods_per_year: int = 252) -> dict:
-    """
-    Simple MV optimizer via SLSQP. mode ∈ {"max_sharpe","min_vol","target"}.
-    """
-    rets = returns.dropna(how="any")
-    mu = rets.mean() * periods_per_year
-    cov = rets.cov() * periods_per_year
-    n = rets.shape[1]
-
-    cons, bounds = _constraints(n, allow_short, weight_cap)
-    w0 = np.repeat(1 / n, n)
-
-    if mode == "min_vol":
-        obj = lambda w: np.sqrt(np.maximum(w @ cov.values @ w, 0.0))
-    elif mode == "target":
+    if mode == "target_return":
         if target_return is None:
-            raise ValueError("target_return required for mode='target'")
-        cons = cons + [{"type": "eq", "fun": lambda w, mu=mu: float(w @ mu.values) - target_return}]
-        obj = lambda w: np.sqrt(np.maximum(w @ cov.values @ w, 0.0))
+            target_return = float(mu.mean())
+        # add return constraint
+        cons.append({"type": "eq", "fun": lambda w, mu=mu, tr=target_return: np.dot(w, mu.values) - tr})
+
+        # objective = variance
+        def obj(w):
+            return float(w @ cov.values @ w)
+
+    elif mode == "min_vol":
+        def obj(w):
+            return float(w @ cov.values @ w)
+
     else:  # max_sharpe
-        def neg_sharpe(w):
-            var = np.maximum(w @ cov.values @ w, 0.0)
-            sig = np.sqrt(var)
-            mu_p = float(w @ mu.values)
-            return - (mu_p - rf) / (sig + 1e-12)
-        obj = neg_sharpe
+        def obj(w):
+            ret, vol, _ = _portfolio_stats(w, mu, cov, rf)
+            # maximize sharpe => minimize -sharpe
+            return -((ret - rf) / vol if vol > 0 else -1e6)
 
-    res = minimize(obj, w0, method="SLSQP", bounds=bounds, constraints=cons,
-                   options={"maxiter": 400, "ftol": 1e-12, "eps": 1e-8})
+    if w0 is None:
+        w0 = np.ones(n) / n
 
+    res = minimize(obj, w0, method="SLSQP", bounds=bnds, constraints=cons, options={"maxiter": 1000})
     if not res.success:
         raise RuntimeError(f"Optimization failed: {res.message}")
 
     w = res.x
-    mu_p = float(w @ mu.values)
-    vol_p = float(np.sqrt(np.maximum(w @ cov.values @ w, 0.0)))
-    sh = (mu_p - rf) / (vol_p + 1e-12)
-    return {"weights": w, "mu": mu_p, "sigma": vol_p, "sharpe": sh, "success": res.success}
+    ret, vol, sr = _portfolio_stats(w, mu, cov, rf)
+    weights = pd.Series(w, index=mu.index, name="weight")
+    return weights, (ret, vol, sr)
 
-def _portfolio_returns(returns: pd.DataFrame, w: np.ndarray) -> np.ndarray:
-    R = returns.dropna(how="any").values
-    return R @ w
 
-def _expected_shortfall(port_ret: np.ndarray, alpha: float = 0.95) -> float:
+def compute_frontier(
+    mu: pd.Series,
+    cov: pd.DataFrame,
+    rf: float = 0.0,
+    points: int = 25,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+) -> pd.DataFrame:
     """
-    CVaR/ES of returns: positive = loss. We minimize ES => more conservative.
+    Compute the mean-variance efficient frontier as a DataFrame with
+    columns ['Return','Vol','Sharpe'] and one row per target point.
     """
-    q = np.quantile(port_ret, 1 - alpha)
-    tail = port_ret[port_ret <= q]
-    if tail.size == 0:
-        return -q
-    return -float(tail.mean())
+    mu_vals = mu.values
+    min_tr = float(np.percentile(mu_vals, 10))
+    max_tr = float(np.percentile(mu_vals, 90))
+    targets = np.linspace(min_tr, max_tr, points)
 
-def cvar_opt(returns: pd.DataFrame, alpha: float = 0.95,
-             allow_short: bool = False, weight_cap: float | None = 0.3) -> dict:
+    rows = []
+    for tr in targets:
+        try:
+            _, stats = _mv_optimize(mu, cov, rf, mode="target_return",
+                                    target_return=float(tr),
+                                    shorting=shorting, max_weight=max_weight)
+            ret, vol, sr = stats
+            rows.append((ret, vol, sr))
+        except Exception:
+            # skip infeasible targets
+            continue
+
+    if not rows:
+        # fall back to max sharpe single point to avoid UI breaking
+        try:
+            _, stats = _mv_optimize(mu, cov, rf, mode="max_sharpe",
+                                    shorting=shorting, max_weight=max_weight)
+            ret, vol, sr = stats
+            rows = [(ret, vol, sr)]
+        except Exception:
+            rows = []
+
+    df = pd.DataFrame(rows, columns=["Return", "Vol", "Sharpe"])
+    return df
+
+
+def optimize_portfolio(
+    prices: pd.DataFrame,
+    rf: float = 0.0,
+    mode: Literal["max_sharpe", "min_vol", "target_return"] = "max_sharpe",
+    target_return: Optional[float] = None,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+) -> Tuple[pd.Series, Tuple[float, float, float], MVInputs]:
     """
-    Minimize Expected Shortfall (historical) using SLSQP.
+    High-level: prepare inputs from prices, run MV optimization.
+    Returns (weights, (ret, vol, sharpe), mv_inputs).
     """
-    rets = returns.dropna(how="any")
-    n = rets.shape[1]
-    cons, bounds = _constraints(n, allow_short, weight_cap)
-    w0 = np.repeat(1 / n, n)
+    mv = prepare_mv_inputs(prices)
+    w, stats = _mv_optimize(mv.mu, mv.cov, rf, mode, target_return, shorting, max_weight)
+    return w, stats, mv
 
-    def obj(w):
-        pr = _portfolio_returns(rets, w)
-        return _expected_shortfall(pr, alpha=alpha)
 
-    res = minimize(obj, w0, method="SLSQP", bounds=bounds, constraints=cons,
-                   options={"maxiter": 400, "ftol": 1e-12, "eps": 1e-8})
+# ---------- CVaR optimizer (optional)
 
-    if not res.success:
-        raise RuntimeError(f"CVaR optimization failed: {res.message}")
+def optimize_cvar(
+    prices: pd.DataFrame,
+    alpha: float = 0.95,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+) -> Optional[pd.Series]:
+    """
+    CVaR (Expected Shortfall) portfolio via historical simulation + LP.
+    Requires cvxpy. Returns weights Series or None if unavailable.
+    """
+    if not _HAS_CVXPY:
+        return None
 
-    w = res.x
-    es = _expected_shortfall(_portfolio_returns(rets, w), alpha=alpha)
-    return {"weights": w, "es": es, "success": res.success}
+    rets = prices.pct_change().dropna(how="any")
+    if rets.empty:
+        return None
+
+    T, n = rets.shape
+    R = rets.values  # (T, n)
+
+    w = cp.Variable(n)
+    z = cp.Variable(T)         # losses beyond VaR
+    var = cp.Variable(1)       # VaR
+
+    lo = -max_weight if shorting else 0.0
+    hi = max_weight
+    constraints = [
+        cp.sum(w) == 1,
+        w >= lo,
+        w <= hi,
+        z >= 0,
+        z >= -(R @ w) - var,   # losses beyond VaR (negative returns)
+    ]
+    # Minimize CVaR = VaR + (1 / ((1-alpha)*T)) * sum(z)
+    objective = cp.Minimize(var + (1.0 / ((1.0 - alpha) * T)) * cp.sum(z))
+    prob = cp.Problem(objective, constraints)
+    prob.solve(solver=cp.ECOS, verbose=False, max_iters=2000)
+
+    if w.value is None:
+        return None
+
+    wv = np.asarray(w.value).ravel()
+    weights = pd.Series(wv, index=rets.columns, name="weight")
+    return weights
+
+
+# ---------- Convenience for the UI (one consistent API)
+
+def frontier_from_prices(
+    prices: pd.DataFrame,
+    rf: float = 0.0,
+    points: int = 25,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+) -> pd.DataFrame:
+    mv = prepare_mv_inputs(prices)
+    return compute_frontier(mv.mu, mv.cov, rf=rf, points=points, shorting=shorting, max_weight=max_weight)

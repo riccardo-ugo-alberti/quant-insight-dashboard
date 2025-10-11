@@ -1,54 +1,79 @@
 # src/data_loader.py
-import yfinance as yf
+from __future__ import annotations
+from typing import List, Optional
 import pandas as pd
 
-def fetch_prices(tickers: list[str], start: str = "2020-01-01") -> pd.DataFrame:
-    """
-    Download daily prices for tickers, returning a tidy DataFrame:
-    index = dates, columns = tickers, values = price.
-    Prefers 'Adj Close', falls back to 'Close'. Works with 1+ tickers.
-    """
-    tickers = [t.strip().upper() for t in tickers if t.strip()]
-    if not tickers:
-        raise ValueError("No valid tickers provided")
+def _ensure_datetime(s: Optional[str]) -> Optional[str]:
+    # yfinance accetta ISO stringhe; lasciamo pass-through
+    return s
 
-    raw = yf.download(
-        tickers,
+def fetch_prices(
+    tickers: List[str],
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Scarica prezzi con yfinance e restituisce un DataFrame a colonne semplici
+    con 'Adj Close' se disponibile, altrimenti 'Close'.
+
+    Ritorna un DataFrame (index = Date, columns = tickers).
+    """
+    if not tickers:
+        return pd.DataFrame()
+
+    try:
+        import yfinance as yf
+    except Exception as e:
+        raise RuntimeError("yfinance non installato. Aggiungi 'yfinance' ai requirements.") from e
+
+    start = _ensure_datetime(start)
+    end = _ensure_datetime(end)
+
+    df = yf.download(
+        tickers=" ".join(tickers),
         start=start,
-        auto_adjust=False,     # keep Close and Adj Close (if available)
+        end=end,
+        auto_adjust=False,
         progress=False,
-        group_by="column"      # field-first columns for multi-ticker
+        group_by="ticker",
+        actions=False,
+        threads=True,
     )
 
-    if raw is None or raw.empty:
-        raise ValueError("No data returned. Check tickers or internet connection.")
-
-    def pick_table(df: pd.DataFrame) -> pd.DataFrame:
-        # MultiIndex columns (field, ticker)
-        if isinstance(df.columns, pd.MultiIndex):
-            lvl0 = df.columns.get_level_values(0)
-            if "Adj Close" in set(lvl0):
-                out = df["Adj Close"]
-            elif "Close" in set(lvl0):
-                out = df["Close"]
+    # Normalizzazione: estraiamo 'Adj Close' quando presente (multi-index), altrimenti 'Close'
+    def _extract_panel(_df) -> pd.DataFrame:
+        if isinstance(_df.columns, pd.MultiIndex):
+            last = _df.columns.get_level_values(-1)
+            if "Adj Close" in last:
+                out = _df.xs("Adj Close", axis=1, level=-1)
+            elif "Close" in last:
+                out = _df.xs("Close", axis=1, level=-1)
             else:
-                # fallback to first available field
-                out = df.xs(df.columns.levels[0][0], axis=1, level=0)
-            return out
-
-        # Single-index columns (single ticker)
-        cols = list(df.columns)
-        if "Adj Close" in cols:
-            series = df["Adj Close"]
-        elif "Close" in cols:
-            series = df["Close"]
+                # prendi l'ultimo livello come fallback
+                out = _df.droplevel(0, axis=1)
         else:
-            numeric_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
-            if not numeric_cols:
-                raise ValueError("No numeric price columns found.")
-            series = df[numeric_cols[0]]
-        return series.to_frame(name=tickers[0])
+            # Colonne semplici (caso singolo ticker). Proviamo a trovare Adj Close
+            if "Adj Close" in _df.columns:
+                out = _df[["Adj Close"]].copy()
+            elif "Close" in _df.columns:
+                out = _df[["Close"]].copy()
+            else:
+                # ultimo tentativo: prendi l’ultima colonna
+                out = _df.iloc[:, [-1]].copy()
 
-    data = pick_table(raw)
-    data = data.dropna(how="all").sort_index()
-    return data
+        # Se solo una colonna, rinomina con il ticker (yfinance mette il nome del campo)
+        if out.shape[1] == 1 and len(tickers) == 1:
+            out.columns = [tickers[0]]
+        return out
+
+    out = _extract_panel(df)
+
+    # Mantieni l’ordine richiesto dove possibile
+    cols = [c for c in tickers if c in out.columns]
+    # Aggiungi eventuali altri simboli (se yfinance li ha rinominati)
+    cols += [c for c in out.columns if c not in cols]
+    out = out.loc[:, cols]
+
+    # Pulizia base
+    out = out.sort_index().dropna(how="all")
+    return out

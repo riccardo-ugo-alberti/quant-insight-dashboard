@@ -1,40 +1,75 @@
 # src/factors.py
 from __future__ import annotations
 import pandas as pd
-import numpy as np
-from pandas_datareader import data as pdr
 import statsmodels.api as sm
+
+# download tramite pandas-datareader
+import pandas_datareader.data as web
+
 
 def get_fama_french(freq: str = "M", five: bool = True) -> pd.DataFrame:
     """
-    Carica i fattori Fama-French da pandas_datareader.
-    freq: 'D' (Daily), 'M' (Monthly). 'famafrench' ufficiale è mensile; per daily usa 'F-F_Research_Data_5_Factors_2x3_daily'.
+    Scarica Fama–French 3 o 5 fattori.
+    freq: "M" (monthly) oppure "D" (daily)
+    Restituisce dataframe con colonne fattori + RF in decimali (non percentuali).
     """
-    if freq.upper().startswith("M"):
-        ds = "F-F_Research_Data_5_Factors_2x3" if five else "F-F_Research_Data_Factors"
+    name = (
+        "F-F_Research_Data_5_Factors_2x3" if five else "F-F_Research_Data_Factors"
+        if freq.upper().startswith("M")
+        else "F-F_Research_Data_5_Daily" if five else "F-F_Research_Data_Factors_Daily"
+    )
+
+    try:
+        ff = web.DataReader(name, "famafrench")[0]
+    except Exception:
+        raise RuntimeError("Could not fetch Fama–French dataset. Try switching frequency or retry later.")
+
+    # indice -> datetime
+    if isinstance(ff.index, pd.PeriodIndex):
+        # per i monthly, to_timestamp porta alla fine mese
+        ff.index = ff.index.to_timestamp(how="end")
     else:
-        ds = "F-F_Research_Data_5_Factors_2x3_daily" if five else "F-F_Research_Data_Factors_daily"
-    ff = pdr.DataReader(ds, "famafrench")[0]
-    ff = ff.rename(columns=lambda c: c.replace(" ", ""))  # es: 'Mkt-RF'
-    ff = ff / 100.0  # in frazioni
+        ff.index = pd.to_datetime(ff.index)
+
+    ff = ff / 100.0  # % -> decimali
     return ff
+
 
 def regress_ff(excess_returns: pd.DataFrame, ff: pd.DataFrame, five: bool = True) -> pd.DataFrame:
     """
-    Esegue regressione OLS: r_it - rf_t = alpha + b * factors + eps.
-    Ritorna betas, alpha e R2 per ogni ticker.
+    OLS per ogni asset: excess returns = alpha + beta*fattori (+ ... ) + eps
+    Ritorna DataFrame con alpha, R2 e loadings fattori.
     """
-    common = excess_returns.join(ff, how="inner")
-    results = []
-    fac_cols = ["Mkt-RF", "SMB", "HML", "RMW", "CMA"] if five else ["Mkt-RF", "SMB", "HML"]
-    for t in excess_returns.columns:
-        y = common[t].dropna()
-        X = common.loc[y.index, fac_cols]
-        X = sm.add_constant(X)
-        model = sm.OLS(y.values, X.values)
-        res = model.fit()
-        row = {"alpha": res.params[0], "R2": res.rsquared}
-        for i, name in enumerate(fac_cols, start=1):
-            row[name] = res.params[i]
-        results.append(pd.Series(row, name=t))
-    return pd.DataFrame(results)
+    factors = ["Mkt-RF", "SMB", "HML", "RMW", "CMA"] if five else ["Mkt-RF", "SMB", "HML"]
+
+    # Allinea indici su datetime
+    X = ff.copy()
+    X.index = pd.to_datetime(X.index)
+    X = X[factors]
+
+    out = []
+    for col in excess_returns.columns:
+        y = excess_returns[col].copy()
+
+        # se è PeriodIndex (mensile) converti a timestamp
+        if isinstance(y.index, pd.PeriodIndex):
+            y.index = y.index.to_timestamp(how="end")
+        else:
+            y.index = pd.to_datetime(y.index)
+
+        aligned = X.reindex(y.index).dropna()
+        y = y.reindex(aligned.index).dropna()
+
+        if len(y) < 12:
+            continue
+
+        X_ = sm.add_constant(aligned)
+        model = sm.OLS(y.astype(float), X_.astype(float)).fit()
+
+        row = {"alpha": model.params.get("const", float("nan")), "R2": model.rsquared}
+        for fac in factors:
+            row[fac] = model.params.get(fac, float("nan"))
+
+        out.append(pd.Series(row, name=col))
+
+    return pd.DataFrame(out) if out else pd.DataFrame(columns=["alpha", *factors, "R2"])
