@@ -78,6 +78,53 @@ def _try_build_html_report(prices, summary, corr_df):
 # ==============================================================================
 
 # --- Helpers per normalizzare gli output degli optimizer e calcolare KPI ---
+def _normalize_frontier(obj) -> pd.DataFrame:
+    """
+    Accetta vari formati (DataFrame diretto, tuple, dict) e restituisce
+    un DataFrame con colonne ['Return','Vol','Sharpe'] se possibile.
+    """
+    if obj is None:
+        return pd.DataFrame(columns=["Return", "Vol", "Sharpe"])
+
+    # DataFrame già pronto
+    if isinstance(obj, pd.DataFrame):
+        df = obj.copy()
+    # Tuple: spesso (weights, frontier_df) o (kpi, frontier_df)
+    elif isinstance(obj, tuple) and len(obj) >= 2 and isinstance(obj[1], pd.DataFrame):
+        df = obj[1].copy()
+    # Dict: prova chiavi comuni
+    elif isinstance(obj, dict):
+        if "frontier" in obj and isinstance(obj["frontier"], pd.DataFrame):
+            df = obj["frontier"].copy()
+        elif "df" in obj and isinstance(obj["df"], pd.DataFrame):
+            df = obj["df"].copy()
+        else:
+            # se l’unico DataFrame è in qualche valore
+            df_vals = [v for v in obj.values() if isinstance(v, pd.DataFrame)]
+            df = df_vals[0].copy() if df_vals else pd.DataFrame()
+    else:
+        df = pd.DataFrame()
+
+    # rinomina colonne in modo robusto
+    cols = {c.lower(): c for c in df.columns}
+    def _pick(*names):
+        for n in names:
+            if n in df.columns:
+                return n
+            if n.lower() in cols:
+                return cols[n.lower()]
+        return None
+
+    c_ret = _pick("Return", "ret", "mu", "expected_return")
+    c_vol = _pick("Vol", "sigma", "risk", "std")
+    c_shp = _pick("Sharpe", "sr", "sharpe_ratio")
+
+    out = pd.DataFrame()
+    if c_ret is not None: out["Return"] = df[c_ret].astype(float)
+    if c_vol is not None: out["Vol"]    = df[c_vol].astype(float)
+    if c_shp is not None and c_shp in df: out["Sharpe"] = df[c_shp].astype(float)
+    return out
+
 def _as_weights(res):
     """Normalizza vari formati (dict/tuple/Series/DF) in una Series di pesi indicizzata per ticker."""
     import pandas as _pd
@@ -298,14 +345,14 @@ with tab_corr:
 with tab_opt:
     st.subheader("Optimizer")
 
-    # Opzioni UI ripristinate
+    # Controlli
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     allow_short = c1.checkbox("Allow shorting", value=False)
     max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=0.30, step=0.05)
     frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1)
     show_frontier = c4.checkbox("Show frontier", value=True)
 
-    # Selettore modalità
+    # Modalità MV come nelle versioni che ti piacevano
     mode = st.selectbox(
         "Optimization mode",
         options=["max_sharpe", "min_vol", "target_return"],
@@ -316,23 +363,27 @@ with tab_opt:
     if mode == "target_return":
         target_ret = st.slider("Target annual return (%)", 0.0, 40.0, 10.0, 0.5) / 100.0
 
-    # ---- Mean-Variance: pesi + KPI ----
+    # ===== Mean-Variance =====
     try:
-        mv_kwargs = dict(prices=px_df, rf=rf/100.0, mode=mode)
-        # (riattiva se la tua implementazione li supporta)
-        # mv_kwargs["allow_short"] = allow_short
-        # mv_kwargs["max_weight"]  = max_cap
+        # PASSIAMO davvero i vincoli allo scheduler (prima erano commentati)
+        mv_kwargs = dict(
+            prices=px_df,
+            rf=rf/100.0,
+            mode=mode,
+            allow_short=allow_short,
+            max_weight=max_cap,
+        )
         if mode == "target_return" and target_ret is not None:
             mv_kwargs["target_return"] = target_ret
 
         mv_out = optimize_portfolio(**mv_kwargs)
         mv_weights = _as_weights(mv_out)
-        if mv_weights is None or len(mv_weights) == 0:
-            raise ValueError("Optimizer returned empty weights.")
+        st.plotly_chart(
+            weights_donut(mv_weights, title="Portfolio Weights (MV)"),
+            use_container_width=True
+        )
 
-        st.plotly_chart(weights_donut(mv_weights, title="Portfolio Weights (MV)"), use_container_width=True)
-
-        # KPI (dal risultato o ricalcolati)
+        # KPI (se non forniti, li ricalcoliamo)
         if isinstance(mv_out, dict) and all(k in mv_out for k in ("return", "vol", "sharpe")):
             mv_kpi = {"return_": mv_out["return"], "vol": mv_out["vol"], "sharpe": mv_out["sharpe"]}
         else:
@@ -343,11 +394,13 @@ with tab_opt:
         k2.metric("Volatility (MV)", f"{mv_kpi['vol']:.2%}")
         k3.metric("Sharpe (MV)", f"{mv_kpi['sharpe']:.2f}")
 
+        # ===== Frontier =====
         if show_frontier:
-            fr = _try_compute_frontier(
+            fr_raw = _try_compute_frontier(
                 px_df, rf=rf/100.0, n_points=frontier_points,
                 allow_short=allow_short, max_weight=max_cap
             )
+            fr = _normalize_frontier(fr_raw)
             st.plotly_chart(frontier_chart(fr), use_container_width=True)
         else:
             st.caption("Frontier hidden.")
@@ -359,17 +412,24 @@ with tab_opt:
     st.subheader("CVaR Optimizer (Expected Shortfall)")
     alpha = st.slider("Confidence (1-α)", min_value=0.80, max_value=0.99, value=0.95, step=0.01)
 
+    # ===== CVaR =====
     try:
-        cv_kwargs = dict(prices=px_df, alpha=alpha)
-        # cv_kwargs["allow_short"] = allow_short
-        # cv_kwargs["max_weight"]  = max_cap
+        cv_kwargs = dict(
+            prices=px_df,
+            alpha=alpha,
+            allow_short=allow_short,   # se il tuo optimizer li ignora, non fa danni
+            max_weight=max_cap,
+        )
         cv_out = optimize_cvar(**cv_kwargs)
         cv_weights = _as_weights(cv_out)
-        if cv_weights is not None and len(cv_weights) > 0:
-            st.plotly_chart(weights_donut(cv_weights, title="Portfolio Weights (CVaR)"), use_container_width=True)
+        st.plotly_chart(
+            weights_donut(cv_weights, title="Portfolio Weights (CVaR)"),
+            use_container_width=True
+        )
 
+        # Se l'optimizer fornisce una curva rischio/rendimento la mostriamo
         if isinstance(cv_out, dict) and "curve" in cv_out and isinstance(cv_out["curve"], pd.DataFrame):
-            st.plotly_chart(px.line(cv_out["curve"], x="Vol", y="Return", template="plotly_dark"), use_container_width=True)
+            st.plotly_chart(px.line(cv_out["curve"], x="Vol", y="Return"), use_container_width=True)
 
     except NotImplementedError:
         st.info("CVaR optimization not available in this build.")

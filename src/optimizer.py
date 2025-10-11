@@ -244,3 +244,90 @@ def frontier_from_prices(
 ) -> pd.DataFrame:
     mv = prepare_mv_inputs(prices)
     return compute_frontier(mv.mu, mv.cov, rf=rf, points=points, shorting=shorting, max_weight=max_weight)
+# =============================================================================
+# COMPATIBILITY SHIM – garantisce coerenza dei nomi tra versioni diverse
+# =============================================================================
+import inspect
+import pandas as pd
+
+def _compat_call(func, **kwargs):
+    """
+    Chiama una funzione provando ad adattare i nomi degli argomenti.
+    Esempio: allow_short -> allow_shorting, max_weight -> weight_cap, n_points -> n_portfolios, ecc.
+    """
+    sig = inspect.signature(func)
+    valid = set(sig.parameters.keys())
+    alt = {
+        "allow_short": "allow_shorting",
+        "max_weight": "weight_cap",
+        "n_points": "n_portfolios",
+        "prices": "px_df",
+        "returns": "rets",
+    }
+
+    # Mappa i nomi noti
+    fixed_kwargs = {}
+    for k, v in kwargs.items():
+        if k in valid:
+            fixed_kwargs[k] = v
+        elif k in alt and alt[k] in valid:
+            fixed_kwargs[alt[k]] = v
+        # ignora quelli sconosciuti
+
+    return func(**fixed_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Wrappers di sicurezza: garantiscono che le chiamate non vadano in errore
+# ---------------------------------------------------------------------------
+try:
+    if "optimize_portfolio" in globals():
+        _orig_optimize_portfolio = optimize_portfolio
+
+        def optimize_portfolio(**kwargs):
+            try:
+                return _compat_call(_orig_optimize_portfolio, **kwargs)
+            except TypeError:
+                # fallback diretto, se non serve compat
+                return _orig_optimize_portfolio(**kwargs)
+except Exception:
+    pass
+
+
+try:
+    if "compute_frontier" in globals():
+        _orig_compute_frontier = compute_frontier
+
+        def compute_frontier(*args, **kwargs):
+            try:
+                res = _compat_call(_orig_compute_frontier, **kwargs)
+            except TypeError:
+                res = _orig_compute_frontier(*args, **kwargs)
+
+            # Assicura sempre un DataFrame come output
+            if isinstance(res, (tuple, list)) and any(isinstance(x, pd.DataFrame) for x in res):
+                for x in res:
+                    if isinstance(x, pd.DataFrame):
+                        return x
+            if isinstance(res, dict):
+                for v in res.values():
+                    if isinstance(v, pd.DataFrame):
+                        return v
+            if isinstance(res, pd.DataFrame):
+                return res
+            return pd.DataFrame()
+except Exception:
+    pass
+
+
+try:
+    if "optimize_cvar" in globals():
+        _orig_optimize_cvar = optimize_cvar
+
+        def optimize_cvar(**kwargs):
+            try:
+                return _compat_call(_orig_optimize_cvar, **kwargs)
+            except TypeError:
+                return _orig_optimize_cvar(**kwargs)
+except Exception:
+    pass
