@@ -206,7 +206,7 @@ st.set_page_config(
 st.sidebar.header("Parameters")
 
 # (a) tickers & date range
-default_tickers = "AAPL, MSFT, SPY, NVDA"
+default_tickers = "AAPL, MSFT, NVDA, TSLA, GOOG"
 tickers_str = st.sidebar.text_input(
     "Tickers (comma-separated) Yahoo Finance",
     value=default_tickers,
@@ -436,6 +436,134 @@ with tab_opt:
         st.info("CVaR optimization not available in this build.")
     except Exception as e:
         st.warning(f"CVaR optimizer error: {e}")
+# --------------------------------------------------------------------------
+# Dynamic Backtest
+# --------------------------------------------------------------------------
+with tab_backtest:
+    st.markdown('<div class="qid-h1">DYNAMIC BACKTEST</div>', unsafe_allow_html=True)
+    st.markdown('<div class="qid-sub">Rolling / EWMA engine with costs & shrinkage</div>', unsafe_allow_html=True)
+    st.divider()
+
+    # === Controls (gruppati in card) ===
+    c_est, c_shr, c_reb = st.columns([1.2, 1.0, 1.0])
+    with c_est:
+        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
+        st.markdown("**Estimation**")
+        use_ewma = st.checkbox("Use EWMA (else Rolling)", value=True, key="bt_use_ewma")
+        col_e1, col_e2 = st.columns(2)
+        ewma_lam = col_e1.slider("EWMA λ", 0.80, 0.995, 0.97, 0.001, key="bt_ewma")
+        roll_win  = col_e2.slider("Rolling window (days)", 30, 252, 90, 1, key="bt_win")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with c_shr:
+        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
+        st.markdown("**Shrinkage**")
+        shrink_method = st.selectbox(
+            "Target",
+            options=["none", "const-cor", "diag", "identity"],
+            index=1,
+            help="Target semplice: const-cor (default), diag, identity.",
+            key="bt_shr_m",
+        )
+        shrink_intensity = st.slider("Intensity γ", 0.0, 1.0, 0.25, 0.05, key="bt_shr_g")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with c_reb:
+        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
+        st.markdown("**Rebalance**")
+        reb_k       = st.slider("Every k days", 1, 63, 21, 1, key="bt_reb_k")
+        allow_short = st.checkbox("Allow short", value=False, key="bt_short")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="qid-gap"></div>', unsafe_allow_html=True)
+
+    c_risk, c_costs = st.columns([1.0, 1.0])
+    with c_risk:
+        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
+        st.markdown("**Risk model**")
+        col_r1, col_r2 = st.columns(2)
+        gamma = col_r1.number_input("Risk aversion γ", min_value=0.1, value=5.0, step=0.1, key="bt_gamma")
+        ridge  = col_r2.number_input("Ridge on Σ", min_value=0.0, value=1e-3, step=1e-3, format="%.4f", key="bt_ridge")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with c_costs:
+        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
+        st.markdown("**Trading costs**")
+        col_c1, col_c2, col_c3 = st.columns(3)
+        tx_bps  = col_c1.number_input("Commissions (bps)", min_value=0.0, value=5.0, step=0.5, key="bt_tx")
+        slp_bps = col_c2.number_input("Slippage (bps)",   min_value=0.0, value=1.0, step=0.5, key="bt_slip")
+        turn_L2 = col_c3.number_input("Turnover penalty λ (L2)", min_value=0.0, value=5.0, step=0.5, key="bt_turn")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # === Run engine & plots ===
+    try:
+        est_cfg = EstimatorConfig(
+            window=int(roll_win),
+            ewma_lambda=float(ewma_lam),
+            use_ewma=bool(use_ewma),
+            shrink=ShrinkageConfig(method=shrink_method, intensity=float(shrink_intensity)),
+        )
+        mv_cfg = MVConfig(
+            risk_aversion=float(gamma),
+            ridge=float(ridge),
+            turnover_L2=float(turn_L2),
+            leverage=1.0,
+            allow_short=bool(allow_short),
+        )
+        cost_cfg = CostConfig(proportional_bps=float(tx_bps), slippage_bps=float(slp_bps))
+        reb_cfg  = RebalanceConfig(every_k_days=int(reb_k), offset=0)
+        bt_cfg   = BacktestConfig(estimator=est_cfg, mv=mv_cfg, costs=cost_cfg, rebalance=reb_cfg)
+
+        eng = RollingEWMAEngine(ret, bt_cfg)
+        out = eng.run(initial_nav=1.0)
+
+        nav_df     = out.get("nav", pd.DataFrame())
+        turn_df    = out.get("turnover", pd.DataFrame())
+        cost_df    = out.get("costs", pd.DataFrame())
+        weights_df = out.get("weights", pd.DataFrame())
+
+        st.session_state["bt_out"] = {"nav": nav_df, "turnover": turn_df, "costs": cost_df, "weights": weights_df}
+
+        if nav_df.empty:
+            st.info("Nessun NAV prodotto (poca storia o primo rebalance fuori range). Prova a ridurre la finestra o allargare le date.")
+            st.stop()
+
+        from src.visuals import nav_chart, turnover_bar, costs_bar, costs_cum_chart, weights_area
+
+        st.plotly_chart(nav_chart(nav_df, title="Backtest NAV"), use_container_width=True)
+        cA, cB = st.columns(2)
+        with cA:
+            st.plotly_chart(turnover_bar(turn_df, title="Turnover (rebalance dates)"), use_container_width=True)
+        with cB:
+            st.plotly_chart(costs_bar(cost_df, title="Transaction costs"), use_container_width=True)
+        st.plotly_chart(costs_cum_chart(cost_df, title="Cumulative transaction costs"), use_container_width=True)
+        st.plotly_chart(weights_area(weights_df, title="Weights over time (stacked)"), use_container_width=True)
+
+        # KPI
+        nav_vals = nav_df["nav"].astype(float)
+        if len(nav_vals) > 1:
+            ret_series = nav_vals.pct_change().dropna()
+            ann_ret = (1 + ret_series.mean())**252 - 1
+            ann_vol = ret_series.std() * np.sqrt(252)
+            rf_annual = rf/100.0
+            sharpe = (ann_ret - rf_annual) / ann_vol if ann_vol > 0 else float("nan")
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Backtest Return (ann.)", f"{ann_ret:.2%}")
+            k2.metric("Backtest Vol (ann.)", f"{ann_vol:.2%}")
+            k3.metric("Sharpe (ann.)", f"{sharpe:.2f}")
+
+        # Download
+        cD1, cD2, cD3, cD4 = st.columns(4)
+        cD1.download_button("Download NAV CSV",      nav_df.to_csv().encode(),     "nav.csv",      "text/csv", use_container_width=True)
+        cD2.download_button("Download Turnover CSV", turn_df.to_csv().encode(),    "turnover.csv", "text/csv", use_container_width=True)
+        cD3.download_button("Download Costs CSV",    cost_df.to_csv().encode(),    "costs.csv",    "text/csv", use_container_width=True)
+        cD4.download_button("Download Weights CSV",  weights_df.to_csv().encode(), "weights.csv",  "text/csv", use_container_width=True)
+
+    except Exception as e:
+        st.error("Dynamic Backtest error")
+        st.exception(e)
 
 # --------------------------------------------------------------------------
 # Data / Export
