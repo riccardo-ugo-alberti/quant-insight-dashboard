@@ -81,56 +81,62 @@ def vol_chart(rolling_vol: pd.DataFrame, title: str = "Rolling annualized volati
 # 3) Risk vs Return scatter (df: ['Ticker','Return','Vol']) + OLS neutra
 # ---------------------------------------------------------------------
 def rr_scatter(df_rr: pd.DataFrame, show_ols: bool = True, title: str = "Risk vs Return") -> go.Figure:
+    # Copia e normalizza
     df = df_rr.copy()
 
-    # Colonne tolleranti (Ticker può stare nell'indice)
+    # colonne attese: Return, Vol (+ opzionale Ticker)
+    if "Return" not in df.columns or "Vol" not in df.columns:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE,
+                          title=dict(text=f"{title} (no data)", font=_TITLE_FONT))
+        return fig
+
+    # Etichette
     if "Ticker" in df.columns:
         labels = df["Ticker"].astype(str)
     else:
         labels = df.index.astype(str)
 
-    # Normalizza nomi in percentuali se servono
-    if "Return %" not in df.columns and "Return" in df.columns:
-        df["Return %"] = df["Return"] * 100.0
-    if "Vol %" not in df.columns and "Vol" in df.columns:
-        df["Vol %"] = df["Vol"] * 100.0
+    # Coercizione a numerico + drop dei NaN
+    df2 = pd.DataFrame({
+        "Return": pd.to_numeric(df["Return"], errors="coerce"),
+        "Vol":    pd.to_numeric(df["Vol"], errors="coerce"),
+        "Label":  labels,
+    }).dropna(subset=["Return", "Vol"]).reset_index(drop=True)
 
-    # Drop righe senza x o y valide
-    base_cols = [c for c in ["Vol %", "Return %"] if c in df.columns]
-    df = df.dropna(subset=base_cols)
+    if df2.empty:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE,
+                          title=dict(text=f"{title} (no valid rows)", font=_TITLE_FONT))
+        return fig
 
-    fig = px.scatter(df, x="Vol %", y="Return %", text=labels.reindex(df.index), template=_DEF_TEMPLATE)
+    df2["Return %"] = df2["Return"] * 100.0
+    df2["Vol %"]    = df2["Vol"] * 100.0
+
+    # Scatter
+    fig = px.scatter(df2, x="Vol %", y="Return %", text=df2["Label"], template=_DEF_TEMPLATE)
     fig.update_traces(textposition="top center")
 
-    # Regressione OLS robusta (solo se ha senso)
-    if show_ols and {"Vol %", "Return %"}.issubset(df.columns) and len(df) >= 2:
-        x = df["Vol %"].to_numpy(dtype=float)
-        y = df["Return %"].to_numpy(dtype=float)
-
-        # Tieni solo punti finiti
-        msk = np.isfinite(x) & np.isfinite(y)
-        x, y = x[msk], y[msk]
-
-        if x.size >= 2 and np.ptp(x) > 1e-12:  # almeno 2 x distinti
-            # y = m*x + c via least squares (più stabile di polyfit qui)
-            X = np.vstack([x, np.ones_like(x)]).T
+    # Regressione OLS (facoltativa, con guardie)
+    if show_ols and len(df2) >= 2:
+        x = df2["Vol %"].to_numpy(dtype=float)
+        y = df2["Return %"].to_numpy(dtype=float)
+        mask = np.isfinite(x) & np.isfinite(y)
+        x, y = x[mask], y[mask]
+        if len(x) >= 2:
             try:
-                m, c = np.linalg.lstsq(X, y, rcond=None)[0]
-                x_line = np.linspace(float(x.min()), float(x.max()), 100)
+                m, c = np.polyfit(x, y, 1)
+                x_line = np.linspace(float(np.min(x)), float(np.max(x)), 100)
                 y_line = m * x_line + c
                 fig.add_trace(
                     go.Scatter(
-                        x=x_line,
-                        y=y_line,
-                        mode="lines",
-                        name="OLS fit",
+                        x=x_line, y=y_line, mode="lines", name="OLS fit",
                         line=dict(width=1.5, color="#9AA0A6", dash="dash"),
-                        hoverinfo="skip",
-                        showlegend=True,
+                        hoverinfo="skip", showlegend=True
                     )
                 )
             except Exception:
-                # se fallisce, non disegnare la retta
+                # se il fit fallisce, saltiamo senza rompere il grafico
                 pass
 
     fig.update_layout(
