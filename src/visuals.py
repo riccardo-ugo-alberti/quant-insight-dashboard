@@ -20,16 +20,33 @@ def _fmt_pct(x: float) -> str:
         return ""
 
 
+def _with_date(df: pd.DataFrame) -> pd.DataFrame:
+    """Ritorna un df con prima colonna 'Date' (per Plotly)."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Date"])
+    out = df.copy()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        try:
+            out.index = pd.to_datetime(out.index)
+        except Exception:
+            pass
+    out = out.reset_index()
+    first_col = out.columns[0]
+    if first_col != "Date":
+        out = out.rename(columns={first_col: "Date"})
+    return out
+
+
 # ---------------------------------------------------------------------
 # 1) Prices (line chart)
 # ---------------------------------------------------------------------
 def prices_chart(prices: pd.DataFrame, title: str = "Adjusted prices") -> go.Figure:
     df = prices.sort_index().reset_index().rename(columns={"index": "Date"})
-    xcol = df.columns[0]  # Date (dopo rename sopra)
+    xcol = df.columns[0]  # Date
     fig = px.line(df, x=xcol, y=prices.columns, template=_DEF_TEMPLATE)
     fig.update_layout(
         title=dict(text=title, font=_TITLE_FONT),
-        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),  # legenda sotto
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
         margin=dict(l=10, r=10, t=60, b=10),
     )
     fig.update_xaxes(title="", tickfont=_AXIS_FONT)
@@ -38,8 +55,7 @@ def prices_chart(prices: pd.DataFrame, title: str = "Adjusted prices") -> go.Fig
 
 
 # ---------------------------------------------------------------------
-# 2) Volatility (rolling annualized) - NO spline (compat con ScatterGL)
-#     Applichiamo una lieve levigatura EMA per estetica (solo plotting).
+# 2) Volatility (rolling annualized) - con leggera EMA di smoothing
 # ---------------------------------------------------------------------
 def vol_chart(rolling_vol: pd.DataFrame, title: str = "Rolling annualized volatility") -> go.Figure:
     try:
@@ -72,32 +88,50 @@ def rr_scatter(df_rr: pd.DataFrame, show_ols: bool = True, title: str = "Risk vs
         labels = df["Ticker"].astype(str)
     else:
         labels = df.index.astype(str)
+
+    # Normalizza nomi in percentuali se servono
     if "Return %" not in df.columns and "Return" in df.columns:
         df["Return %"] = df["Return"] * 100.0
     if "Vol %" not in df.columns and "Vol" in df.columns:
         df["Vol %"] = df["Vol"] * 100.0
 
-    fig = px.scatter(df, x="Vol %", y="Return %", text=labels, template=_DEF_TEMPLATE)
+    # Drop righe senza x o y valide
+    base_cols = [c for c in ["Vol %", "Return %"] if c in df.columns]
+    df = df.dropna(subset=base_cols)
+
+    fig = px.scatter(df, x="Vol %", y="Return %", text=labels.reindex(df.index), template=_DEF_TEMPLATE)
     fig.update_traces(textposition="top center")
 
-    # Regressione OLS grigio neutro, hover disattivato
-    if show_ols and len(df) >= 2 and df["Vol %"].notna().any() and df["Return %"].notna().any():
-        x = df["Vol %"].to_numpy()
-        y = df["Return %"].to_numpy()
-        m, c = np.polyfit(x, y, 1)
-        x_line = np.linspace(float(np.min(x)), float(np.max(x)), 100)
-        y_line = m * x_line + c
-        fig.add_trace(
-            go.Scatter(
-                x=x_line,
-                y=y_line,
-                mode="lines",
-                name="OLS fit",
-                line=dict(width=1.5, color="#9AA0A6", dash="dash"),  # grigio neutro
-                hoverinfo="skip",
-                showlegend=True,
-            )
-        )
+    # Regressione OLS robusta (solo se ha senso)
+    if show_ols and {"Vol %", "Return %"}.issubset(df.columns) and len(df) >= 2:
+        x = df["Vol %"].to_numpy(dtype=float)
+        y = df["Return %"].to_numpy(dtype=float)
+
+        # Tieni solo punti finiti
+        msk = np.isfinite(x) & np.isfinite(y)
+        x, y = x[msk], y[msk]
+
+        if x.size >= 2 and np.ptp(x) > 1e-12:  # almeno 2 x distinti
+            # y = m*x + c via least squares (più stabile di polyfit qui)
+            X = np.vstack([x, np.ones_like(x)]).T
+            try:
+                m, c = np.linalg.lstsq(X, y, rcond=None)[0]
+                x_line = np.linspace(float(x.min()), float(x.max()), 100)
+                y_line = m * x_line + c
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_line,
+                        y=y_line,
+                        mode="lines",
+                        name="OLS fit",
+                        line=dict(width=1.5, color="#9AA0A6", dash="dash"),
+                        hoverinfo="skip",
+                        showlegend=True,
+                    )
+                )
+            except Exception:
+                # se fallisce, non disegnare la retta
+                pass
 
     fig.update_layout(
         title=dict(text=title, font=_TITLE_FONT),
@@ -195,11 +229,11 @@ def weights_donut(weights: pd.Series, title: str = "Portfolio Weights") -> go.Fi
 # ---------------------------------------------------------------------
 def corr_heatmap(cm: pd.DataFrame, title: str = "Correlation Matrix") -> go.Figure:
     z = cm.values
-    text = np.vectorize(lambda v: f"{v:.3f}")(z)  # 3 decimali per evitare troppi 0.00
+    text = np.vectorize(lambda v: f"{v:.3f}")(z)  # 3 decimali
 
     colorscale = [
         [0.0, "#7A1E1E"],  # rosso scuro
-        [0.5, "#222222"],  # neutro su tema scuro
+        [0.5, "#222222"],  # neutro
         [1.0, "#1E90FF"],  # blu
     ]
     fig = go.Figure(
@@ -266,3 +300,120 @@ def weights_pie(weights, title="Portfolio Weights"):
     fig.update_layout(margin=dict(l=10, r=10, t=60, b=10),
                       legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0))
     return fig
+
+
+# =========================
+# NUOVI GRAFICI BACKTEST
+# =========================
+
+# 9) NAV time series (output: out['nav'] dal backtest)
+def nav_chart(nav_df: pd.DataFrame, title: str = "Backtest NAV") -> go.Figure:
+    if nav_df is None or nav_df.empty:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE, title=dict(text=f"{title} (no data)", font=_TITLE_FONT))
+        return fig
+    df = _with_date(nav_df)
+    ycol = "nav" if "nav" in df.columns else df.columns[1]
+    fig = px.line(df, x="Date", y=ycol, template=_DEF_TEMPLATE)
+    fig.update_layout(
+        title=dict(text=title, font=_TITLE_FONT),
+        margin=dict(l=10, r=10, t=60, b=10),
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
+    )
+    fig.update_xaxes(title="", tickfont=_AXIS_FONT)
+    fig.update_yaxes(title="NAV", tickfont=_AXIS_FONT)
+    return fig
+
+
+# 10) Turnover per rebalance date (out['turnover'])
+def turnover_bar(turn_df: pd.DataFrame, title: str = "Turnover per rebalance") -> go.Figure:
+    if turn_df is None or turn_df.empty:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE, title=dict(text=f"{title} (no trades)", font=_TITLE_FONT))
+        return fig
+    df = _with_date(turn_df)
+    ycol = "turnover" if "turnover" in df.columns else df.columns[1]
+    fig = px.bar(df, x="Date", y=ycol, template=_DEF_TEMPLATE)
+    fig.update_traces(hovertemplate="%{y:.2f}<extra></extra>")
+    fig.update_layout(
+        title=dict(text=title, font=_TITLE_FONT),
+        margin=dict(l=10, r=10, t=60, b=10),
+        xaxis=dict(tickfont=_AXIS_FONT),
+        yaxis=dict(tickfont=_AXIS_FONT, title="Turnover (|Δw| sum)"),
+    )
+    return fig
+
+
+# 11) Transaction costs (out['costs'])
+def costs_bar(cost_df: pd.DataFrame, title: str = "Transaction costs") -> go.Figure:
+    if cost_df is None or cost_df.empty:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE, title=dict(text=f"{title} (no costs)", font=_TITLE_FONT))
+        return fig
+    df = _with_date(cost_df)
+    ycol = "cost" if "cost" in df.columns else df.columns[1]
+    fig = px.bar(df, x="Date", y=ycol, template=_DEF_TEMPLATE)
+    fig.update_traces(hovertemplate="%{y:.6f}<extra></extra>")
+    fig.update_layout(
+        title=dict(text=title, font=_TITLE_FONT),
+        margin=dict(l=10, r=10, t=60, b=10),
+        xaxis=dict(tickfont=_AXIS_FONT),
+        yaxis=dict(tickfont=_AXIS_FONT, title="Cost (currency)"),
+    )
+    return fig
+
+
+# 12) Cumulative costs line (utile per visualizzare il cost drag cumulato)
+def costs_cum_chart(cost_df: pd.DataFrame, title: str = "Cumulative transaction costs") -> go.Figure:
+    if cost_df is None or cost_df.empty:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE, title=dict(text=f"{title} (no costs)", font=_TITLE_FONT))
+        return fig
+    df = cost_df.copy().sort_index()
+    if "cost" not in df.columns:
+        first_num = df.select_dtypes("number").columns
+        if len(first_num):
+            df = df.rename(columns={first_num[0]: "cost"})
+        else:
+            df["cost"] = 0.0
+    cum = df["cost"].cumsum().to_frame("cum_cost")
+    dfp = _with_date(cum)
+    fig = px.line(dfp, x="Date", y="cum_cost", template=_DEF_TEMPLATE)
+    fig.update_layout(
+        title=dict(text=title, font=_TITLE_FONT),
+        margin=dict(l=10, r=10, t=60, b=10),
+        xaxis=dict(tickfont=_AXIS_FONT),
+        yaxis=dict(tickfont=_AXIS_FONT, title="Cumulative cost"),
+    )
+    return fig
+
+
+# 13) Weights over time (stacked area) — input: out['weights']
+def weights_area(weights_df: pd.DataFrame, title: str = "Weights over time (stacked)") -> go.Figure:
+    if weights_df is None or weights_df.empty:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE, title=dict(text=f"{title} (no data)", font=_TITLE_FONT))
+        return fig
+
+    df = _with_date(weights_df)
+    # individua colonne numeriche (gli asset)
+    num_cols = [c for c in df.columns if c != "Date" and np.issubdtype(df[c].dtype, np.number)]
+    if not num_cols:
+        fig = go.Figure()
+        fig.update_layout(template=_DEF_TEMPLATE, title=dict(text=f"{title} (no numeric columns)", font=_TITLE_FONT))
+        return fig
+
+    # long format per area stacked
+    long_df = df.melt(id_vars="Date", value_vars=num_cols, var_name="Asset", value_name="Weight")
+    long_df["Weight %"] = long_df["Weight"] * 100.0
+
+    fig = px.area(long_df, x="Date", y="Weight %", color="Asset", template=_DEF_TEMPLATE)
+    fig.update_layout(
+        title=dict(text=title, font=_TITLE_FONT),
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
+        margin=dict(l=10, r=10, t=60, b=10),
+    )
+    fig.update_xaxes(title="", tickfont=_AXIS_FONT)
+    fig.update_yaxes(title="Weight (%)", tickfont=_AXIS_FONT)
+    return fig
+
