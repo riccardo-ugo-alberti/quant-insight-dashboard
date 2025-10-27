@@ -282,9 +282,10 @@ vol_roll = rolling_vol(ret, window=window)      # rolling annualized vol
 # --------------------------------------------------------------------------
 # Tabs
 # --------------------------------------------------------------------------
-tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_export = st.tabs(
-    ["Prices", "Performance", "Volatility", "Correlation", "Optimizer", "Data / Export"]
+tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_backtest, tab_export = st.tabs(
+    ["Prices", "Performance", "Volatility", "Correlation", "Optimizer", "Dynamic Backtest", "Data / Export"]
 )
+
 
 # --------------------------------------------------------------------------
 # Prices
