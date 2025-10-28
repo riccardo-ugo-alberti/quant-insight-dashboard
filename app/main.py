@@ -21,14 +21,16 @@ import streamlit as st
 # --- robust imports for the backtest (avoid NameError) ---
 try:
     from src.backtest.engine import RollingEWMAEngine
-    from src.backtest.config import (
-        BacktestConfig,
-        EstimatorConfig,
-        MVConfig,
-        CostConfig,
-        RebalanceConfig,
-        ShrinkageConfig,
-    )
+    from src.backtest import (
+    BacktestConfig,
+    EstimatorConfig,
+    ShrinkageConfig,
+    MVConfig,
+    CostConfig,
+    RebalanceConfig,
+    RollingEWMAEngine,
+)
+
 except Exception as e:
     import streamlit as st
     st.error(f"Backtest imports failed: {e}")
