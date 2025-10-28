@@ -17,24 +17,34 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
 # --- Backtest engine & configs ---
-# --- robust imports for the backtest (avoid NameError) ---
 try:
     from src.backtest.engine import RollingEWMAEngine
     from src.backtest import (
-    BacktestConfig,
-    EstimatorConfig,
-    ShrinkageConfig,
-    MVConfig,
-    CostConfig,
-    RebalanceConfig,
-    RollingEWMAEngine,
-)
-
+        BacktestConfig,
+        EstimatorConfig,
+        ShrinkageConfig,
+        MVConfig,
+        CostConfig,
+        RebalanceConfig,
+        RollingEWMAEngine,
+    )
 except Exception as e:
     import streamlit as st
     st.error(f"Backtest imports failed: {e}")
 
+# ==== Helpers popover (fallback se non supportato) ============================
+SUPPORTS_POPOVER = hasattr(st, "popover")
+
+def info_popover(label: str, content_md: str):
+    """Mostra un popover (se disponibile) o una caption fallback."""
+    if SUPPORTS_POPOVER:
+        with st.popover(label, use_container_width=True):
+            st.markdown(content_md)
+    else:
+        # Fallback leggero (non altera layout troppo)
+        st.caption(content_md)
 
 # ==== Compat helpers ==========================================================
 def _try_compute_frontier(px_df, rf, n_points, allow_short=None, max_weight=None):
@@ -69,7 +79,6 @@ def _try_compute_frontier(px_df, rf, n_points, allow_short=None, max_weight=None
     _rets = to_returns(px_df)
     return compute_frontier(_rets)
 
-
 def _try_build_html_report(prices, summary, corr_df):
     """
     Prova vari nomi-argomento per build_html_report e ritorna bytes da scaricare.
@@ -93,7 +102,6 @@ def _try_build_html_report(prices, summary, corr_df):
     # correlation=
     res = build_html_report(prices=prices, summary=summary, correlation=corr_df)
     return (res.getvalue() if isinstance(res, StringIO) else (res if isinstance(res, str) else str(res))).encode("utf-8")
-# ==============================================================================
 
 # --- Helpers per normalizzare gli output degli optimizer e calcolare KPI ---
 def _normalize_frontier(obj) -> pd.DataFrame:
@@ -117,7 +125,6 @@ def _normalize_frontier(obj) -> pd.DataFrame:
         elif "df" in obj and isinstance(obj["df"], pd.DataFrame):
             df = obj["df"].copy()
         else:
-            # se l’unico DataFrame è in qualche valore
             df_vals = [v for v in obj.values() if isinstance(v, pd.DataFrame)]
             df = df_vals[0].copy() if df_vals else pd.DataFrame()
     else:
@@ -178,7 +185,6 @@ def _as_weights(res):
         return s
     raise ValueError("Formato pesi non riconosciuto dall'optimizer.")
 
-
 def _mv_kpi_from_weights(px_df, weights_series, rf_annual):
     """Return, Vol, Sharpe annualizzati dai pesi (rf_annual in frazione)."""
     from src.analytics import to_returns
@@ -190,7 +196,6 @@ def _mv_kpi_from_weights(px_df, weights_series, rf_annual):
     port_vol = float((np.dot(w, cov.values @ w)) ** 0.5)
     sharpe = (port_ret - rf_annual) / port_vol if port_vol > 0 else float("nan")
     return dict(return_=port_ret, vol=port_vol, sharpe=sharpe)
-
 
 def _with_date(df: pd.DataFrame) -> pd.DataFrame:
     out = df.reset_index()
@@ -224,23 +229,36 @@ st.set_page_config(
 st.sidebar.header("Parameters")
 
 # (a) tickers & date range
-# (a) tickers & date range
 default_tickers = "AAPL, MSFT, NVDA, TSLA, GOOG"
 tickers_str = st.sidebar.text_input(
     "Tickers (comma-separated) Yahoo Finance",
     value=default_tickers,
     key="tickers_str",
+    help="Inserisci ticker separati da virgola (es. AAPL, MSFT). Useremo gli Adj Close da Yahoo Finance."
 )
 tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
 date_range = st.sidebar.date_input(
     "Date range",
     value=(dt.date.today() - dt.timedelta(days=365*5), dt.date.today()),
+    help="Intervallo di analisi. I calcoli (rendimenti/volatilità) usano solo i giorni di trading disponibili."
 )
 
 # (b) risk free & rolling window (default 90)
-rf = st.sidebar.number_input("Risk-free (annual, %)", min_value=0.0, value=2.00, step=0.05)
-window = st.sidebar.slider("Rolling window (days)", min_value=30, max_value=252, value=90, step=1)
+rf = st.sidebar.number_input(
+    "Risk-free (annual, %)",
+    min_value=0.0, value=2.00, step=0.05,
+    help="Tasso privo di rischio annuale in percentuale (es. 2.00 = 2%). Usato nei calcoli di Sharpe."
+)
+col_win, col_win_info = st.sidebar.columns([3,1])
+with col_win:
+    window = st.sidebar.slider(
+        "Rolling window (days)",
+        min_value=30, max_value=252, value=90, step=1,
+        help="Numero di giorni nella finestra mobile per le statistiche (es. volatilità rolling)."
+    )
+with col_win_info:
+    info_popover("ℹ️", "- **Rolling window**: numero di giorni della finestra mobile.\n- Più grande = curva più liscia, meno reattiva.\n- Tipico: 60–126 gg.")
 
 # (c) optional: save/load config (solo JSON)
 with st.sidebar.expander("Save / Load setup", expanded=False):
@@ -305,14 +323,13 @@ tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_backtest, tab_export = st.
     ["Prices", "Performance", "Volatility", "Correlation", "Optimizer", "Dynamic Backtest", "Data / Export"]
 )
 
-
 # --------------------------------------------------------------------------
 # Prices
 # --------------------------------------------------------------------------
 with tab_prices:
     st.subheader("Adjusted Prices")
-    # Grafico SOPRA la tabella
     st.plotly_chart(prices_chart(px_df), use_container_width=True)
+    st.caption("Prezzi aggiustati per dividendi/split. La tabella mostra gli ultimi valori disponibili.")
     st.dataframe(px_df.tail(), use_container_width=True)
 
 # --------------------------------------------------------------------------
@@ -321,39 +338,72 @@ with tab_prices:
 with tab_perf:
     st.subheader("Cumulative Returns")
     st.plotly_chart(perf_cum_chart(px_df), use_container_width=True)
+    st.caption("Serie dei prezzi normalizzati a 1 nel giorno iniziale: Performance_t = Price_t / Price_0.")
 
     st.subheader("Risk vs Return (annualized)")
-    st.plotly_chart(rr_scatter(summary), use_container_width=True)
+    # Popover compatto accanto al titolo
+    cols_rr = st.columns([6,1])
+    with cols_rr[0]:
+        st.plotly_chart(rr_scatter(summary), use_container_width=True)
+    with cols_rr[1]:
+        info_popover("ℹ️", "- **Return (ann.)** ≈ media giornaliera × 252 (o compounding).\n- **Vol (ann.)** = std giornaliera × √252.\n- **Sharpe** = (Return − rf)/Vol.")
 
     st.markdown("**Summary (annualized)**")
     st.dataframe(
         summary.style.format({"Return": "{:.2%}", "Vol": "{:.2%}", "Sharpe": "{:.2f}"}),
         use_container_width=True,
     )
+    with st.expander("ℹ️ Come sono calcolati Return/Vol/Sharpe?"):
+        st.markdown(
+            "- **Return (ann.)**: compound della media giornaliera su 252 giorni di trading.\n"
+            "- **Vol (ann.)**: deviazione standard giornaliera × √252.\n"
+            "- **Sharpe**: (Return − Risk-free) / Vol."
+        )
 
 # --------------------------------------------------------------------------
 # Volatility
 # --------------------------------------------------------------------------
 with tab_vol:
-    st.subheader(f"Rolling Volatility (window = {window} days, annualized)")
+    vol_head = st.columns([6,1])
+    with vol_head[0]:
+        st.subheader(f"Rolling Volatility (window = {window} days, annualized)")
+    with vol_head[1]:
+        info_popover("ℹ️", "- **Rolling vol** su rendimenti giornalieri.\n- **Annualizzata** con √252.\n- Finestra più grande = più smooth.")
+
     st.plotly_chart(vol_chart(vol_roll), use_container_width=True)
+    st.caption("Volatilità annualizzata = std dei rendimenti giornalieri nella finestra × √252 (dati in decimali, grafico in %).")
+    with st.expander("Dettagli sulla volatilità rolling"):
+        st.markdown(
+            f"- Calcolata sui **rendimenti giornalieri** (non sui prezzi).\n"
+            f"- Finestra scorrevole di **{window}** giorni.\n"
+            "- Annualizzazione con **√252** (giorni di borsa)."
+        )
 
 # --------------------------------------------------------------------------
 # Correlation
 # --------------------------------------------------------------------------
 with tab_corr:
-    st.subheader("Correlation matrix (ordered)")
+    corr_head = st.columns([6,1])
+    with corr_head[0]:
+        st.subheader("Correlation matrix (ordered)")
+    with corr_head[1]:
+        info_popover("ℹ️", "- Correlazione di **Pearson** tra rendimenti giornalieri.\n- Range: −1 (perfettamente inversa) → +1 (perfettamente diretta).")
     st.plotly_chart(corr_heatmap(cm), use_container_width=True)
+    st.caption("Correlazioni di Pearson tra rendimenti giornalieri. Valori tra −1 e +1.")
 
     st.markdown("**Pairwise rolling correlation**")
     pairs = []
     for i in range(len(tickers)):
         for j in range(i + 1, len(tickers)):
             pairs.append(f"{tickers[i]} — {tickers[j]}")
-    pair_choice = st.selectbox("Select pair", options=pairs)
+    cols_pair = st.columns([4,1])
+    with cols_pair[0]:
+        pair_choice = st.selectbox("Select pair", options=pairs, help="Scegli due asset per vedere la correlazione mobile.")
+    with cols_pair[1]:
+        info_popover("ℹ️", f"- Correlazione su finestra **{window}**.\n- Utile per individuare fasi di (dis)accoppiamento.")
+
     if pair_choice:
         a, b = [t.strip() for t in pair_choice.split("—")]
-        # Rolling correlation diretta (più stabile)
         r_pair = ret[a].rolling(window).corr(ret[b]).dropna().to_frame(name=f"{a}-{b}")
         fig_pair = px.line(_with_date(r_pair), x="Date", y=f"{a}-{b}", template="plotly_dark")
         fig_pair.add_hline(y=0, line_dash="dash")
@@ -365,27 +415,41 @@ with tab_corr:
 with tab_opt:
     st.subheader("Optimizer")
 
-    # Controlli
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-    allow_short = c1.checkbox("Allow shorting", value=False)
-    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=0.30, step=0.05)
-    frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1)
-    show_frontier = c4.checkbox("Show frontier", value=True)
+    # Controlli (con popover a lato)
+    c1, c2, c3, c4, cinfo = st.columns([1, 1, 1, 1, 0.6])
+    allow_short = c1.checkbox("Allow shorting", value=False, help="Permetti pesi negativi (vendita allo scoperto).")
+    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=0.30, step=0.05, help="Vincolo di concentrazione per singolo asset.")
+    frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1, help="Numero di portafogli campionati sulla frontiera.")
+    show_frontier = c4.checkbox("Show frontier", value=True, help="Mostra la frontiera efficiente stimata.")
+    with cinfo:
+        info_popover("ℹ️ MV", "- **MV** stima media/covarianza (ann.).\n- Obiettivi: max Sharpe / min Vol / target return.\n- Vincoli: shorting, cap pesi.")
 
-    # Modalità MV come nelle versioni che ti piacevano
-    mode = st.selectbox(
-        "Optimization mode",
-        options=["max_sharpe", "min_vol", "target_return"],
-        index=0,
-        help="Choose the mean-variance objective.",
-    )
-    target_ret = None
-    if mode == "target_return":
-        target_ret = st.slider("Target annual return (%)", 0.0, 40.0, 10.0, 0.5) / 100.0
+    cols_mode = st.columns([2,1,0.6])
+    with cols_mode[0]:
+        mode = st.selectbox(
+            "Optimization mode",
+            options=["max_sharpe", "min_vol", "target_return"],
+            index=0,
+            help="Obiettivo MV: massimizza Sharpe, minimizza la volatilità, oppure raggiungi un return target.",
+        )
+    with cols_mode[1]:
+        if mode == "target_return":
+            target_ret = st.slider("Target annual return (%)", 0.0, 40.0, 10.0, 0.5,
+                                   help="Rendimento annuo desiderato (in percentuale).") / 100.0
+        else:
+            target_ret = None
+    with cols_mode[2]:
+        info_popover("ℹ️ Target", "- Valore espresso in **% annuo**.\n- Il solver cerca pesi che ottengono almeno quel rendimento.")
+
+    with st.expander("Come funziona la Mean-Variance Optimization?"):
+        st.markdown(
+            "- Stima **media** e **covarianza** dei rendimenti giornalieri (annualizzati).\n"
+            "- Risolve per i pesi che **massimizzano Sharpe**, **minimizzano Vol**, o raggiungono un **Return target**.\n"
+            "- Applica i vincoli selezionati: shorting, cap per asset, ecc."
+        )
 
     # ===== Mean-Variance =====
     try:
-        # PASSIAMO davvero i vincoli allo scheduler (prima erano commentati)
         mv_kwargs = dict(
             prices=px_df,
             rf=rf/100.0,
@@ -415,29 +479,39 @@ with tab_opt:
         k3.metric("Sharpe (MV)", f"{mv_kpi['sharpe']:.2f}")
 
         # ===== Frontier =====
-        if show_frontier:
-            fr_raw = _try_compute_frontier(
-                px_df, rf=rf/100.0, n_points=frontier_points,
-                allow_short=allow_short, max_weight=max_cap
-            )
-            fr = _normalize_frontier(fr_raw)
-            st.plotly_chart(frontier_chart(fr), use_container_width=True)
-        else:
-            st.caption("Frontier hidden.")
+        fr_info_cols = st.columns([6,1])
+        with fr_info_cols[0]:
+            if show_frontier:
+                fr_raw = _try_compute_frontier(
+                    px_df, rf=rf/100.0, n_points=frontier_points,
+                    allow_short=allow_short, max_weight=max_cap
+                )
+                fr = _normalize_frontier(fr_raw)
+                st.plotly_chart(frontier_chart(fr), use_container_width=True)
+                st.caption("Frontiera efficiente stimata: combinazioni di portafogli per diversi livelli di rischio/rendimento.")
+            else:
+                st.caption("Frontier hidden.")
+        with fr_info_cols[1]:
+            info_popover("ℹ️ Frontiera", "- Campionata in **N punti**.\n- Ogni punto = portafoglio efficiente diverso.\n- Colore = Sharpe (se disponibile).")
 
     except Exception as e:
         st.warning(f"MV optimization error: {e}")
 
     st.markdown("---")
     st.subheader("CVaR Optimizer (Expected Shortfall)")
-    alpha = st.slider("Confidence (1-α)", min_value=0.80, max_value=0.99, value=0.95, step=0.01)
+    cols_cvar = st.columns([2,0.6])
+    with cols_cvar[0]:
+        alpha = st.slider("Confidence (1-α)", min_value=0.80, max_value=0.99, value=0.95, step=0.01,
+                          help="Livello di confidenza per il CVaR: 95% = perdita media nel 5% peggiore.")
+    with cols_cvar[1]:
+        info_popover("ℹ️ CVaR", "**CVaR (Expected Shortfall)**: perdita media nella coda peggiore (1−α). Più prudente del VaR.")
 
     # ===== CVaR =====
     try:
         cv_kwargs = dict(
             prices=px_df,
             alpha=alpha,
-            allow_short=allow_short,   # se il tuo optimizer li ignora, non fa danni
+            allow_short=allow_short,   # se l'optimizer li ignora, non fa danni
             max_weight=max_cap,
         )
         cv_out = optimize_cvar(**cv_kwargs)
@@ -447,14 +521,15 @@ with tab_opt:
             use_container_width=True
         )
 
-        # Se l'optimizer fornisce una curva rischio/rendimento la mostriamo
         if isinstance(cv_out, dict) and "curve" in cv_out and isinstance(cv_out["curve"], pd.DataFrame):
             st.plotly_chart(px.line(cv_out["curve"], x="Vol", y="Return"), use_container_width=True)
+            st.caption("Curva rischio/rendimento secondo la metrica CVaR (Expected Shortfall).")
 
     except NotImplementedError:
         st.info("CVaR optimization not available in this build.")
     except Exception as e:
         st.warning(f"CVaR optimizer error: {e}")
+
 # --------------------------------------------------------------------------
 # Dynamic Backtest
 # --------------------------------------------------------------------------
@@ -464,54 +539,123 @@ with tab_backtest:
     st.divider()
 
     # === Controls (gruppati in card) ===
-    c_est, c_shr, c_reb = st.columns([1.2, 1.0, 1.0])
+    c_est, c_shr, c_reb = st.columns([1.3, 1.0, 1.0])
+
     with c_est:
         st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        st.markdown("**Estimation**")
-        use_ewma = st.checkbox("Use EWMA (else Rolling)", value=True, key="bt_use_ewma")
-        col_e1, col_e2 = st.columns(2)
-        ewma_lam = col_e1.slider("EWMA λ", 0.80, 0.995, 0.97, 0.001, key="bt_ewma")
-        roll_win  = col_e2.slider("Rolling window (days)", 30, 252, 90, 1, key="bt_win")
+        head_cols = st.columns([4,1])
+        with head_cols[0]:
+            st.markdown("**Estimation**")
+        with head_cols[1]:
+            info_popover("ℹ️", "- **EWMA**: media esponenziale (più peso ai dati recenti).\n- **Rolling**: finestra scorrevole classica.")
+
+        use_ewma = st.checkbox("Use EWMA (else Rolling)", value=True, key="bt_use_ewma",
+                               help="EWMA usa media esponenziale (più peso ai dati recenti). Alternativa: finestra rolling.")
+        col_e1, col_e2, col_ei = st.columns([2,2,1])
+        with col_e1:
+            ewma_lam = st.slider("EWMA λ", 0.80, 0.995, 0.97, 0.001, key="bt_ewma",
+                                 help="Fattore di decadimento (più alto = memoria più lunga).")
+        with col_e2:
+            roll_win  = st.slider("Rolling window (days)", 30, 252, 90, 1, key="bt_win",
+                                  help="Finestra per stimare media/covarianza con metodo rolling.")
+        with col_ei:
+            info_popover("ℹ️ EWMA/Win",
+                "- **λ alto**: memoria più lunga (reagisce lentamente).\n"
+                "- **Win alto**: stima più stabile ma meno reattiva."
+            )
         st.markdown("</div>", unsafe_allow_html=True)
 
     with c_shr:
         st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        st.markdown("**Shrinkage**")
-        shrink_method = st.selectbox(
-            "Target",
-            options=["none", "const-cor", "diag", "identity"],
-            index=1,
-            help="Target semplice: const-cor (default), diag, identity.",
-            key="bt_shr_m",
-        )
-        shrink_intensity = st.slider("Intensity γ", 0.0, 1.0, 0.25, 0.05, key="bt_shr_g")
+        head_cols = st.columns([4,1])
+        with head_cols[0]:
+            st.markdown("**Shrinkage**")
+        with head_cols[1]:
+            info_popover("ℹ️", "- Riduce il rumore nella **Σ**.\n- Converge verso un **target** (const-corr/diag/identity).")
+
+        row1 = st.columns([2,2,1])
+        with row1[0]:
+            shrink_method = st.selectbox(
+                "Target",
+                options=["none", "const-cor", "diag", "identity"],
+                index=1,
+                help="Shrinkage della matrice di covarianza verso un target (es. const-correlation).",
+                key="bt_shr_m",
+            )
+        with row1[1]:
+            shrink_intensity = st.slider("Intensity γ", 0.0, 1.0, 0.25, 0.05, key="bt_shr_g",
+                                        help="Intensità shrinkage (0 = nessuno, 1 = tutto al target).")
+        with row1[2]:
+            info_popover("ℹ️ γ",
+                "- **γ** = 0 nessuno shrinkage; **γ** = 1 tutto al target.\n"
+                "- Tipico: 0.1–0.4 per portafogli equity multi-asset."
+            )
         st.markdown("</div>", unsafe_allow_html=True)
 
     with c_reb:
         st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        st.markdown("**Rebalance**")
-        reb_k       = st.slider("Every k days", 1, 63, 21, 1, key="bt_reb_k")
-        allow_short = st.checkbox("Allow short", value=False, key="bt_short")
+        head_cols = st.columns([4,1])
+        with head_cols[0]:
+            st.markdown("**Rebalance**")
+        with head_cols[1]:
+            info_popover("ℹ️", "- Frequenza di ribilanciamento **k**.\n- Shorting abilita pesi negativi.")
+
+        row1 = st.columns([2,2,1])
+        with row1[0]:
+            reb_k       = st.slider("Every k days", 1, 63, 21, 1, key="bt_reb_k",
+                                    help="Frequenza di ribilanciamento (ogni k giorni di borsa).")
+        with row1[1]:
+            allow_short = st.checkbox("Allow short", value=False, key="bt_short",
+                                      help="Permetti pesi negativi nel backtest.")
+        with row1[2]:
+            info_popover("ℹ️ k/Short", "- **k basso**: più trading e costi.\n- **Short**: può amplificare rischio e turnover.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="qid-gap"></div>', unsafe_allow_html=True)
 
     c_risk, c_costs = st.columns([1.0, 1.0])
+
     with c_risk:
         st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        st.markdown("**Risk model**")
-        col_r1, col_r2 = st.columns(2)
-        gamma = col_r1.number_input("Risk aversion γ", min_value=0.1, value=5.0, step=0.1, key="bt_gamma")
-        ridge  = col_r2.number_input("Ridge on Σ", min_value=0.0, value=1e-3, step=1e-3, format="%.4f", key="bt_ridge")
+        head_cols = st.columns([4,1])
+        with head_cols[0]:
+            st.markdown("**Risk model**")
+        with head_cols[1]:
+            info_popover("ℹ️", "- **γ**: avversione al rischio; più alto = più prudente.\n- **Ridge**: stabilizza la Σ (regolarizzazione).")
+
+        row1 = st.columns([2,2,1])
+        with row1[0]:
+            gamma = st.number_input("Risk aversion γ", min_value=0.1, value=5.0, step=0.1, key="bt_gamma",
+                                    help="Parametro MV: più alto = più avversione al rischio (pesi più prudenti).")
+        with row1[1]:
+            ridge  = st.number_input("Ridge on Σ", min_value=0.0, value=1e-3, step=1e-3, format="%.4f", key="bt_ridge",
+                                     help="Regolarizzazione della matrice di covarianza per stabilità numerica.")
+        with row1[2]:
+            info_popover("ℹ️ γ/Ridge",
+                "- **γ** alto → più peso al rischio.\n- **Ridge** evita Σ mal-condizionata."
+            )
         st.markdown("</div>", unsafe_allow_html=True)
 
     with c_costs:
         st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        st.markdown("**Trading costs**")
-        col_c1, col_c2, col_c3 = st.columns(3)
-        tx_bps  = col_c1.number_input("Commissions (bps)", min_value=0.0, value=5.0, step=0.5, key="bt_tx")
-        slp_bps = col_c2.number_input("Slippage (bps)",   min_value=0.0, value=1.0, step=0.5, key="bt_slip")
-        turn_L2 = col_c3.number_input("Turnover penalty λ (L2)", min_value=0.0, value=5.0, step=0.5, key="bt_turn")
+        head_cols = st.columns([4,1])
+        with head_cols[0]:
+            st.markdown("**Trading costs**")
+        with head_cols[1]:
+            info_popover("ℹ️", "- **bps** = basis points (1 bps = 0.01%).\n- **Slippage**: costo esecuzione.")
+
+        row1 = st.columns([2,2,2,1])
+        with row1[0]:
+            tx_bps  = st.number_input("Commissions (bps)", min_value=0.0, value=5.0, step=0.5, key="bt_tx",
+                                      help="Commissioni per trade in basis points (1 bps = 0.01%).")
+        with row1[1]:
+            slp_bps = st.number_input("Slippage (bps)",   min_value=0.0, value=1.0, step=0.5, key="bt_slip",
+                                      help="Costo di esecuzione (spread/market impact) in bps.")
+        with row1[2]:
+            turn_L2 = st.number_input("Turnover penalty λ (L2)", min_value=0.0, value=5.0, step=0.5, key="bt_turn",
+                                      help="Penalità quadratica sui cambi di peso per limitare il turnover.")
+        with row1[3]:
+            info_popover("ℹ️ Costi", "- Più **turnover** = più costi.\n- **λ L2** penalizza rotazioni eccessive.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
@@ -552,13 +696,29 @@ with tab_backtest:
         from src.visuals import nav_chart, turnover_bar, costs_bar, costs_cum_chart, weights_area
 
         st.plotly_chart(nav_chart(nav_df, title="Backtest NAV"), use_container_width=True)
+        st.caption("NAV: valore cumulato del portafoglio (base 1.0).")
+
         cA, cB = st.columns(2)
         with cA:
             st.plotly_chart(turnover_bar(turn_df, title="Turnover (rebalance dates)"), use_container_width=True)
+            st.caption("Turnover: somma delle variazioni assolute di peso ai rebalance.")
         with cB:
             st.plotly_chart(costs_bar(cost_df, title="Transaction costs"), use_container_width=True)
+            st.caption("Costi di transazione: commissioni + slippage per ciascun rebalance.")
+
         st.plotly_chart(costs_cum_chart(cost_df, title="Cumulative transaction costs"), use_container_width=True)
+        st.caption("Cost drag cumulato nel tempo.")
+
         st.plotly_chart(weights_area(weights_df, title="Weights over time (stacked)"), use_container_width=True)
+        st.caption("Evoluzione delle allocazioni nel tempo (pesi %).")
+
+        with st.expander("Come leggere i risultati del backtest"):
+            st.markdown(
+                "- **NAV**: valore del portafoglio a base 1.0.\n"
+                "- **Turnover**: somma delle variazioni assolute di peso ai rebalance.\n"
+                "- **Transaction costs**: commissioni + slippage; il grafico cumulato mostra il cost-drag.\n"
+                "- KPI annualizzati calcolati dai rendimenti giornalieri del NAV."
+            )
 
         # KPI
         nav_vals = nav_df["nav"].astype(float)
@@ -589,6 +749,7 @@ with tab_backtest:
 # --------------------------------------------------------------------------
 with tab_export:
     st.subheader("Data / Export")
+    st.caption("Scarica i dati grezzi della sessione: prezzi, correlazioni e un report HTML one-click.")
     c1, c2 = st.columns(2)
 
     with c1:
