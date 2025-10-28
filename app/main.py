@@ -42,76 +42,27 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- UI polish: typography & help components ---
+# --- Minimal UI polish (no cards, no popovers, no help tooltips) ---
 st.markdown("""
 <style>
-/* Subtle, clean typography */
-html, body, [class*="css"] { letter-spacing: 0.1px; }
-.block-container { padding-top: 2rem; }
-
-/* Section headings */
+html, body, [class*="css"] { letter-spacing: 0.05px; }
+.block-container { padding-top: 1.4rem; }
 .qid-h1 { font-size: 1.55rem; font-weight: 700; margin: .25rem 0 .5rem 0; }
 .qid-sub { color: #b9c1d9; font-size: .95rem; margin-top: -.35rem; }
-
-/* Cards look (used in Backtest controls) */
-.qid-card {
-  border: 1px solid rgba(160, 185, 255, 0.18);
-  border-radius: 14px;
-  padding: .75rem .9rem;
-  background: linear-gradient(180deg, rgba(20,20,30,0.55) 0%, rgba(20,20,30,0.35) 100%);
-  box-shadow: 0 8px 22px rgba(0,0,0,.25);
-  margin-bottom: .75rem;
-}
-.qid-gap { height: .5rem; }
-
-/* Help badge + popover content */
-.qid-badge-wrap { display: flex; justify-content: flex-end; margin-top: .2rem; }
-.qid-badge {
-  background: rgba(180, 200, 255, 0.10);
-  border: 1px solid rgba(160, 185, 255, 0.25);
-  border-radius: 10px;
-  padding: .25rem .55rem;
-  font-size: .80rem; cursor: pointer; user-select: none;
-}
-.qid-badge:hover { background: rgba(180, 200, 255, 0.16); border-color: rgba(160, 185, 255, 0.45); }
-.qid-help-title { font-weight: 600; font-size: .95rem; margin: 0 0 .25rem 0; }
-.qid-help-list  { margin: .2rem 0 0 .2rem; padding-left: 1rem; line-height: 1.35; font-size: .90rem; opacity: .95; }
-
-/* Tighten metric spacing */
 [data-testid="stMetricValue"] { font-size: 1.2rem; }
+
+/* OPTIONAL: if any legacy tooltip targets remain, hide them */
+[data-testid="stTooltipHoverTarget"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
-# Popover helper (with graceful fallback)
-# --------------------------------------------------------------------------
-SUPPORTS_POPOVER = hasattr(st, "popover")
-
-def info_popover(label: str, title_md: str, points_md: list[str]):
-    """
-    Render a small info badge that opens a popover (or caption fallback).
-    `title_md` is a short heading; `points_md` is a list of bullets (markdown).
-    """
-    content = f'<div class="qid-help-title">{title_md}</div><ul class="qid-help-list">' + \
-              "".join([f"<li>{p}</li>" for p in points_md]) + "</ul>"
-    if SUPPORTS_POPOVER:
-        with st.popover(label, use_container_width=True):
-            st.markdown(content, unsafe_allow_html=True)
-    else:
-        # fallback: a compact caption (no layout jumps)
-        st.caption(title_md + " — " + " • ".join(points_md))
-
-# --------------------------------------------------------------------------
-# Compat helpers
+# Helpers
 # --------------------------------------------------------------------------
 def _try_compute_frontier(px_df, rf, n_points, allow_short=None, max_weight=None):
-    """
-    Try calling compute_frontier with different known signatures.
-    Return the frontier DataFrame (or raise for a real error).
-    """
+    """Try calling compute_frontier with different known signatures."""
     from src.optimizer import compute_frontier
     from src.analytics import to_returns
-
     try:
         return compute_frontier(
             prices=px_df, rf=rf, n_points=n_points,
@@ -149,8 +100,8 @@ def _try_build_html_report(prices, summary, corr_df):
     res = build_html_report(prices=prices, summary=summary, correlation=corr_df)
     return (res.getvalue() if isinstance(res, StringIO) else (res if isinstance(res, str) else str(res))).encode("utf-8")
 
-# --- Optimizer utilities ---
 def _normalize_frontier(obj) -> pd.DataFrame:
+    """Normalize frontier outputs to a DataFrame with Return/Vol/Sharpe if possible."""
     if obj is None:
         return pd.DataFrame(columns=["Return", "Vol", "Sharpe"])
     if isinstance(obj, pd.DataFrame):
@@ -186,6 +137,7 @@ def _normalize_frontier(obj) -> pd.DataFrame:
     return out
 
 def _as_weights(res):
+    """Normalize weights output (dict/tuple/Series/DataFrame) to a Series."""
     import pandas as _pd
     if res is None:
         return None
@@ -220,6 +172,7 @@ def _as_weights(res):
     raise ValueError("Unrecognized weights format from optimizer.")
 
 def _mv_kpi_from_weights(px_df, weights_series, rf_annual):
+    """Compute annualized return/vol/sharpe from weights."""
     from src.analytics import to_returns
     rets = to_returns(px_df)
     mu = rets.mean() * 252.0
@@ -252,7 +205,6 @@ from src.visuals     import (
 # --------------------------------------------------------------------------
 st.sidebar.header("Parameters")
 
-# Language is fixed to English for help text (by your request)
 def t(en: str) -> str:
     return en
 
@@ -262,36 +214,25 @@ tickers_str = st.sidebar.text_input(
     "Tickers (comma-separated) — Yahoo Finance",
     value=default_tickers,
     key="tickers_str",
-    help=t("Enter comma-separated tickers (e.g., AAPL, MSFT). We use Yahoo Finance Adjusted Close.")
 )
 tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
 date_range = st.sidebar.date_input(
     "Date range",
     value=(dt.date.today() - dt.timedelta(days=365*5), dt.date.today()),
-    help=t("Analysis window. Calculations use trading days available in the period.")
 )
 
 # (b) risk-free & rolling window (default 90)
 rf = st.sidebar.number_input(
     "Risk-free (annual, %)",
     min_value=0.0, value=2.00, step=0.05,
-    help=t("Annual risk-free rate in percent (e.g., 2.00 = 2%). Used in Sharpe.")
 )
-col_win, col_win_info = st.sidebar.columns([3,1])
-with col_win:
-    window = st.sidebar.slider(
-        "Rolling window (days)",
-        min_value=30, max_value=252, value=90, step=1,
-        help=t("Window length for rolling statistics (e.g., rolling volatility).")
-    )
-with col_win_info:
-    info_popover("ℹ️", "Rolling window",
-                 [t("Number of days for the rolling stats."),
-                  t("Larger = smoother, less reactive."),
-                  t("Typical equity: 60–126 days.")])
+window = st.sidebar.slider(
+    "Rolling window (days)",
+    min_value=30, max_value=252, value=90, step=1,
+)
 
-# (c) optional: save/load config (JSON only)
+# (c) Save/Load config (JSON)
 with st.sidebar.expander("Save / Load setup", expanded=False):
     col_s, col_l = st.columns(2)
     cfg = {
@@ -372,14 +313,7 @@ with tab_perf:
     st.caption("Prices normalized at start (t=0): Performance_t = Price_t / Price_0.")
 
     st.subheader("Risk vs Return (annualized)")
-    cols_rr = st.columns([6,1])
-    with cols_rr[0]:
-        st.plotly_chart(rr_scatter(summary), use_container_width=True)
-    with cols_rr[1]:
-        info_popover("ℹ️", "Risk/Return metrics",
-                     ["Return (ann.) ≈ daily mean × 252 (or compounding)",
-                      "Volatility (ann.) = daily std × √252",
-                      "Sharpe = (Return − rf) / Vol"])
+    st.plotly_chart(rr_scatter(summary), use_container_width=True)
 
     st.markdown("**Summary (annualized)**")
     st.dataframe(
@@ -397,15 +331,7 @@ with tab_perf:
 # Volatility
 # --------------------------------------------------------------------------
 with tab_vol:
-    vol_head = st.columns([6,1])
-    with vol_head[0]:
-        st.subheader(f"Rolling Volatility (window = {window} days, annualized)")
-    with vol_head[1]:
-        info_popover("ℹ️", "Rolling volatility",
-                     ["Based on daily returns (not prices)",
-                      "Annualized via √252",
-                      "Larger window = smoother curve"])
-
+    st.subheader(f"Rolling Volatility (window = {window} days, annualized)")
     st.plotly_chart(vol_chart(vol_roll), use_container_width=True)
     st.caption("Annualized volatility = std of daily returns within the window × √252 (data in decimals, chart shown in %).")
     with st.expander("Volatility details"):
@@ -419,13 +345,7 @@ with tab_vol:
 # Correlation
 # --------------------------------------------------------------------------
 with tab_corr:
-    corr_head = st.columns([6,1])
-    with corr_head[0]:
-        st.subheader("Correlation matrix (ordered)")
-    with corr_head[1]:
-        info_popover("ℹ️", "Pearson correlation",
-                     ["Daily return correlations",
-                      "Range: −1 (inverse) to +1 (direct)"])
+    st.subheader("Correlation matrix (ordered)")
     st.plotly_chart(corr_heatmap(cm), use_container_width=True)
     st.caption("Pearson correlations of daily returns.")
 
@@ -434,14 +354,7 @@ with tab_corr:
     for i in range(len(tickers)):
         for j in range(i + 1, len(tickers)):
             pairs.append(f"{tickers[i]} — {tickers[j]}")
-    cols_pair = st.columns([4,1])
-    with cols_pair[0]:
-        pair_choice = st.selectbox("Select pair", options=pairs, help="Pick two assets to inspect time-varying correlation.")
-    with cols_pair[1]:
-        info_popover("ℹ️", "Rolling corr",
-                     [f"Window: **{window}** days",
-                      "Useful to spot decoupling phases"])
-
+    pair_choice = st.selectbox("Select pair", options=pairs)
     if pair_choice:
         a, b = [t.strip() for t in pair_choice.split("—")]
         r_pair = ret[a].rolling(window).corr(ret[b]).dropna().to_frame(name=f"{a}-{b}")
@@ -455,36 +368,21 @@ with tab_corr:
 with tab_opt:
     st.subheader("Optimizer")
 
-    # Controls (with compact popovers)
-    c1, c2, c3, c4, cinfo = st.columns([1, 1, 1, 1, 0.8])
-    allow_short = c1.checkbox("Allow shorting", value=False, help="Permit negative weights (short selling).")
-    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=0.30, step=0.05, help="Per-asset allocation cap.")
-    frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1, help="How many portfolios to sample on the frontier.")
-    show_frontier = c4.checkbox("Show frontier", value=True, help="Display the efficient frontier plot.")
-    with cinfo:
-        info_popover("ℹ️", "Mean–Variance (MV)",
-                     ["Annualized mean/covariance of returns",
-                      "Objectives: max Sharpe / min Vol / target return",
-                      "Constraints: shorting, per-asset caps"])
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    allow_short = c1.checkbox("Allow shorting", value=False)
+    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=0.30, step=0.05)
+    frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1)
+    show_frontier = c4.checkbox("Show frontier", value=True)
 
-    cols_mode = st.columns([2,1,0.8])
-    with cols_mode[0]:
-        mode = st.selectbox(
-            "Optimization mode",
-            options=["max_sharpe", "min_vol", "target_return"],
-            index=0,
-            help="Choose the mean–variance objective."
-        )
-    with cols_mode[1]:
-        if mode == "target_return":
-            target_ret = st.slider("Target annual return (%)", 0.0, 40.0, 10.0, 0.5,
-                                   help="Desired annual return (percentage).") / 100.0
-        else:
-            target_ret = None
-    with cols_mode[2]:
-        info_popover("ℹ️", "Target return",
-                     ["Expressed in annual percent",
-                      "Solver searches weights achieving at least that return"])
+    mode = st.selectbox(
+        "Optimization mode",
+        options=["max_sharpe", "min_vol", "target_return"],
+        index=0,
+    )
+    if mode == "target_return":
+        target_ret = st.slider("Target annual return (%)", 0.0, 40.0, 10.0, 0.5) / 100.0
+    else:
+        target_ret = None
 
     with st.expander("How MV optimization works"):
         st.markdown(
@@ -523,38 +421,22 @@ with tab_opt:
         k2.metric("Volatility (MV)", f"{mv_kpi['vol']:.2%}")
         k3.metric("Sharpe (MV)", f"{mv_kpi['sharpe']:.2f}")
 
-        fr_info_cols = st.columns([6,1])
-        with fr_info_cols[0]:
-            if show_frontier:
-                fr_raw = _try_compute_frontier(
-                    px_df, rf=rf/100.0, n_points=frontier_points,
-                    allow_short=allow_short, max_weight=max_cap
-                )
-                fr = _normalize_frontier(fr_raw)
-                st.plotly_chart(frontier_chart(fr), use_container_width=True)
-                st.caption("Estimated efficient frontier: portfolios at different risk/return levels.")
-            else:
-                st.caption("Frontier hidden.")
-        with fr_info_cols[1]:
-            info_popover("ℹ️", "Frontier",
-                         ["Sampled in N points",
-                          "Each point = feasible efficient portfolio",
-                          "Color = Sharpe (if available)"])
-
+        if show_frontier:
+            fr_raw = _try_compute_frontier(
+                px_df, rf=rf/100.0, n_points=frontier_points,
+                allow_short=allow_short, max_weight=max_cap
+            )
+            fr = _normalize_frontier(fr_raw)
+            st.plotly_chart(frontier_chart(fr), use_container_width=True)
+            st.caption("Estimated efficient frontier: portfolios at different risk/return levels.")
+        else:
+            st.caption("Frontier hidden.")
     except Exception as e:
         st.warning(f"MV optimization error: {e}")
 
     st.markdown("---")
     st.subheader("CVaR Optimizer (Expected Shortfall)")
-    cols_cvar = st.columns([2,0.8])
-    with cols_cvar[0]:
-        alpha = st.slider("Confidence (1−α)", min_value=0.80, max_value=0.99, value=0.95, step=0.01,
-                          help="Confidence level for CVaR: 95% = average loss in the worst 5% of cases.")
-    with cols_cvar[1]:
-        info_popover("ℹ️", "What is CVaR?",
-                     ["Average loss in the tail beyond VaR",
-                      "More conservative than VaR",
-                      "Useful for downside-risk control"])
+    alpha = st.slider("Confidence (1−α)", min_value=0.80, max_value=0.99, value=0.95, step=0.01)
 
     # ===== CVaR optimize =====
     try:
@@ -581,149 +463,60 @@ with tab_opt:
         st.warning(f"CVaR optimizer error: {e}")
 
 # --------------------------------------------------------------------------
-# Dynamic Backtest (polished UI)
+# Dynamic Backtest (clean layout)
 # --------------------------------------------------------------------------
 with tab_backtest:
     st.markdown('<div class="qid-h1">DYNAMIC BACKTEST</div>', unsafe_allow_html=True)
     st.markdown('<div class="qid-sub">Rolling / EWMA engine with covariance shrinkage & trading costs</div>', unsafe_allow_html=True)
     st.divider()
 
-    # Controls grouped in sleek cards
-    c_est, c_shr, c_reb = st.columns([1.35, 1.0, 1.0])
+    # Estimation controls
+    st.markdown("**Estimation**")
+    col_est1, col_est2, col_est3 = st.columns([1,1,1])
+    with col_est1:
+        use_ewma = st.checkbox("Use EWMA (else Rolling)", value=True, key="bt_use_ewma")
+    with col_est2:
+        ewma_lam = st.slider("EWMA λ", 0.80, 0.995, 0.97, 0.001, key="bt_ewma")
+    with col_est3:
+        roll_win  = st.slider("Rolling window (days)", 30, 252, 90, 1, key="bt_win")
 
-    # === Estimation ===
-    with c_est:
-        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        head_cols = st.columns([4,1])
-        with head_cols[0]:
-            st.markdown("**Estimation**")
-        with head_cols[1]:
-            info_popover("ℹ️", "EWMA vs Rolling",
-                         ["EWMA: exponential decay (more weight on recent data)",
-                          "Rolling: simple moving window",
-                          "Pick based on regime reactivity"])
+    # Shrinkage controls
+    st.markdown("**Shrinkage**")
+    col_shr1, col_shr2 = st.columns([1,1])
+    with col_shr1:
+        shrink_method = st.selectbox(
+            "Target",
+            options=["none", "const-cor", "diag", "identity"],
+            index=1,
+            key="bt_shr_m",
+        )
+    with col_shr2:
+        shrink_intensity = st.slider("Intensity γ", 0.0, 1.0, 0.25, 0.05, key="bt_shr_g")
 
-        use_ewma = st.checkbox("Use EWMA (else Rolling)", value=True, key="bt_use_ewma",
-                               help="EWMA uses exponential weighting; Rolling uses a fixed-size window.")
-        col_e1, col_e2, col_ei = st.columns([2,2,1])
-        with col_e1:
-            ewma_lam = st.slider("EWMA λ", 0.80, 0.995, 0.97, 0.001, key="bt_ewma",
-                                 help="Decay factor (higher = longer memory).")
-        with col_e2:
-            roll_win  = st.slider("Rolling window (days)", 30, 252, 90, 1, key="bt_win",
-                                  help="Window length for mean/covariance estimation.")
-        with col_ei:
-            info_popover("ℹ️", "Tuning tips",
-                         ["Higher λ → slower response",
-                          "Larger window → more stable, less reactive"])
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Rebalance controls
+    st.markdown("**Rebalance**")
+    col_reb1, col_reb2 = st.columns([1,1])
+    with col_reb1:
+        reb_k = st.slider("Every k days", 1, 63, 21, 1, key="bt_reb_k")
+    with col_reb2:
+        allow_short_bt = st.checkbox("Allow short", value=False, key="bt_short")
 
-    # === Shrinkage ===
-    with c_shr:
-        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        head_cols = st.columns([4,1])
-        with head_cols[0]:
-            st.markdown("**Shrinkage**")
-        with head_cols[1]:
-            info_popover("ℹ️", "Why shrink Σ?",
-                         ["Reduces covariance noise",
-                          "Converges to a target structure",
-                          "Stabilizes optimization"])
+    # Risk & Costs
+    st.markdown("**Risk model**")
+    col_r1, col_r2 = st.columns([1,1])
+    with col_r1:
+        gamma = st.number_input("Risk aversion γ", min_value=0.1, value=5.0, step=0.1, key="bt_gamma")
+    with col_r2:
+        ridge = st.number_input("Ridge on Σ", min_value=0.0, value=1e-3, step=1e-3, format="%.4f", key="bt_ridge")
 
-        row1 = st.columns([2,2,1])
-        with row1[0]:
-            shrink_method = st.selectbox(
-                "Target",
-                options=["none", "const-cor", "diag", "identity"],
-                index=1,
-                help="Shrink the covariance matrix towards a target.",
-                key="bt_shr_m",
-            )
-        with row1[1]:
-            shrink_intensity = st.slider("Intensity γ", 0.0, 1.0, 0.25, 0.05, key="bt_shr_g",
-                                         help="0 = no shrink; 1 = fully to target.")
-        with row1[2]:
-            info_popover("ℹ️", "γ guidance",
-                         ["Typical equity multi-asset: 0.1–0.4"])
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # === Rebalance ===
-    with c_reb:
-        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        head_cols = st.columns([4,1])
-        with head_cols[0]:
-            st.markdown("**Rebalance**")
-        with head_cols[1]:
-            info_popover("ℹ️", "Frequency & shorts",
-                         ["k days between rebalances",
-                          "Shorts allow negative weights"])
-
-        row1 = st.columns([2,2,1])
-        with row1[0]:
-            reb_k       = st.slider("Every k days", 1, 63, 21, 1, key="bt_reb_k",
-                                    help="Rebalance frequency in trading days.")
-        with row1[1]:
-            allow_short_bt = st.checkbox("Allow short", value=False, key="bt_short",
-                                         help="Allow negative weights in backtest.")
-        with row1[2]:
-            info_popover("ℹ️", "Trade-offs",
-                         ["Lower k → more trading & costs",
-                          "Shorts may amplify risk/turnover"])
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="qid-gap"></div>', unsafe_allow_html=True)
-
-    # Risk model & costs
-    c_risk, c_costs = st.columns([1.0, 1.0])
-
-    with c_risk:
-        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        head_cols = st.columns([4,1])
-        with head_cols[0]:
-            st.markdown("**Risk model**")
-        with head_cols[1]:
-            info_popover("ℹ️", "γ & Ridge",
-                         ["γ: risk aversion (higher = more conservative)",
-                          "Ridge: regularizes Σ (conditioning)"])
-
-        row1 = st.columns([2,2,1])
-        with row1[0]:
-            gamma = st.number_input("Risk aversion γ", min_value=0.1, value=5.0, step=0.1, key="bt_gamma",
-                                    help="Higher γ emphasizes risk penalty.")
-        with row1[1]:
-            ridge  = st.number_input("Ridge on Σ", min_value=0.0, value=1e-3, step=1e-3, format="%.4f", key="bt_ridge",
-                                     help="Tikhonov regularization for covariance matrix.")
-        with row1[2]:
-            info_popover("ℹ️", "Guidance",
-                         ["Higher γ → more defensive weights",
-                          "Ridge helps when Σ is ill-conditioned"])
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with c_costs:
-        st.markdown('<div class="qid-card">', unsafe_allow_html=True)
-        head_cols = st.columns([4,1])
-        with head_cols[0]:
-            st.markdown("**Trading costs**")
-        with head_cols[1]:
-            info_popover("ℹ️", "bps & slippage",
-                         ["1 bps = 0.01%",
-                          "Slippage = execution cost"])
-
-        row1 = st.columns([2,2,2,1])
-        with row1[0]:
-            tx_bps  = st.number_input("Commissions (bps)", min_value=0.0, value=5.0, step=0.5, key="bt_tx",
-                                      help="Per-trade commissions, in basis points.")
-        with row1[1]:
-            slp_bps = st.number_input("Slippage (bps)",   min_value=0.0, value=1.0, step=0.5, key="bt_slip",
-                                      help="Execution cost (spread/impact), in bps.")
-        with row1[2]:
-            turn_L2 = st.number_input("Turnover penalty λ (L2)", min_value=0.0, value=5.0, step=0.5, key="bt_turn",
-                                      help="Quadratic penalty on weight changes to limit turnover.")
-        with row1[3]:
-            info_popover("ℹ️", "Cost control",
-                         ["Higher turnover → higher costs",
-                          "λ helps smooth allocation changes"])
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("**Trading costs**")
+    col_c1, col_c2, col_c3 = st.columns([1,1,1])
+    with col_c1:
+        tx_bps  = st.number_input("Commissions (bps)", min_value=0.0, value=5.0, step=0.5, key="bt_tx")
+    with col_c2:
+        slp_bps = st.number_input("Slippage (bps)", min_value=0.0, value=1.0, step=0.5, key="bt_slip")
+    with col_c3:
+        turn_L2 = st.number_input("Turnover penalty λ (L2)", min_value=0.0, value=5.0, step=0.5, key="bt_turn")
 
     st.divider()
 
