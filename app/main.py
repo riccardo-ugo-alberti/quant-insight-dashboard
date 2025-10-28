@@ -222,6 +222,7 @@ st.set_page_config(
 st.sidebar.header("Parameters")
 
 # (a) tickers & date range
+# (a) tickers & date range
 default_tickers = "AAPL, MSFT, NVDA, TSLA, GOOG"
 tickers_str = st.sidebar.text_input(
     "Tickers (comma-separated) Yahoo Finance",
