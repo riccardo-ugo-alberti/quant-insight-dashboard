@@ -291,7 +291,6 @@ with st.sidebar.expander("Save / Load setup", expanded=False):
 # Data fetch
 # --------------------------------------------------------------------------
 st.title("Quant Insight Dashboard")
-st.info("BUILD CHECK — Optimizer UI v2 (segmented/radio) — "+ pd.Timestamp.now(tz="Europe/Rome").strftime("%Y-%m-%d %H:%M"))
 st.caption("Performance, risk and correlations for selected tickers/ETFs.")
 
 if len(tickers) < 2:
@@ -418,9 +417,9 @@ with tab_opt:
     _options = ["max_sharpe", "min_vol", "target_return"]
     # etichetta palese per capire se il codice è quello nuovo
     try:
-       mode = st.segmented_control("Optimization mode 🔧", options=_options, default="max_sharpe")
+       mode = st.segmented_control("Optimization mode", options=_options, default="max_sharpe")
     except Exception:
-       mode = st.radio("Optimization mode 🔧", options=_options, index=0, horizontal=True)
+       mode = st.radio("Optimization mode", options=_options, index=0, horizontal=True)
 
 
     if mode == "target_return":
