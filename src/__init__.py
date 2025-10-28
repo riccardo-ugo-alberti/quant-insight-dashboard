@@ -18,3 +18,15 @@ __all__ = [
     "rolling_volatility",
     "fetch_prices",
 ]
+from .config import BacktestConfig, EstimatorConfig, MVConfig, CostConfig, RebalanceConfig, ShrinkageConfig
+from .engine import RollingEWMAEngine
+
+__all__ = [
+    "BacktestConfig",
+    "EstimatorConfig",
+    "MVConfig",
+    "CostConfig",
+    "RebalanceConfig",
+    "ShrinkageConfig",
+    "RollingEWMAEngine",
+]

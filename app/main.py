@@ -17,6 +17,22 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+# --- Backtest engine & configs ---
+# --- robust imports for the backtest (avoid NameError) ---
+try:
+    from src.backtest.engine import RollingEWMAEngine
+    from src.backtest.config import (
+        BacktestConfig,
+        EstimatorConfig,
+        MVConfig,
+        CostConfig,
+        RebalanceConfig,
+        ShrinkageConfig,
+    )
+except Exception as e:
+    import streamlit as st
+    st.error(f"Backtest imports failed: {e}")
+
 
 # ==== Compat helpers ==========================================================
 def _try_compute_frontier(px_df, rf, n_points, allow_short=None, max_weight=None):
