@@ -58,24 +58,29 @@ def prices_chart(prices: pd.DataFrame, title: str = "Adjusted prices") -> go.Fig
 # 2) Volatility (rolling annualized) - con leggera EMA di smoothing
 # ---------------------------------------------------------------------
 def vol_chart(rolling_vol: pd.DataFrame, title: str = "Rolling annualized volatility") -> go.Figure:
+    # smoothing leggero (opzionale)
     try:
-        smoothed = rolling_vol.ewm(span=5, adjust=False).mean()
+        smoothed = rolling_vol.astype(float).ewm(span=5, adjust=False).mean()
     except Exception:
         smoothed = rolling_vol
 
     df = smoothed.sort_index().reset_index().rename(columns={"index": "Date"})
     xcol = df.columns[0]
+
+    # linee per tutte le colonne (dati in DECIMALI: 0.25 = 25%)
     fig = px.line(df, x=xcol, y=smoothed.columns, template=_DEF_TEMPLATE)
+
+    # hover in percento, asse Y in percento (nessun *100 sui dati!)
     fig.update_traces(mode="lines", hovertemplate="%{y:.2%}<extra>%{fullData.name}</extra>")
     fig.update_layout(
         title=dict(text=title, font=_TITLE_FONT),
         legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
+        hovermode="x unified",
         margin=dict(l=10, r=10, t=60, b=10),
     )
     fig.update_xaxes(title="", tickfont=_AXIS_FONT)
-    fig.update_yaxes(title="", tickfont=_AXIS_FONT)
+    fig.update_yaxes(title="", tickfont=_AXIS_FONT, tickformat=".0%")  # << percento via formattazione
     return fig
-
 
 # ---------------------------------------------------------------------
 # 3) Risk vs Return scatter (df: ['Ticker','Return','Vol']) + OLS neutra
