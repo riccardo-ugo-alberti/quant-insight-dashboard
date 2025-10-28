@@ -10,7 +10,7 @@ toolbarMode = "auto"
 
 [theme]
 base="dark"
-primaryColor="#00c3ff"
+primaryColor="#ff4b4b"
 backgroundColor="#0E1117"
 secondaryBackgroundColor="#1C1F26"
 textColor="#FAFAFA"

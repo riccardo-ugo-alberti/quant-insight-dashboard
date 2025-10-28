@@ -55,6 +55,33 @@ html, body, [class*="css"] { letter-spacing: 0.05px; }
 [data-testid="stTooltipHoverTarget"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
+st.markdown("""
+<style>
+/* Pannello e testo del dropdown */
+div[data-baseweb="select"] div[role="listbox"] {
+  background-color: #0f1117 !important;
+  color: #e6edf3 !important;
+  border: 1px solid #2a2f3a !important;
+}
+
+/* Forza il colore su tutte le label delle opzioni */
+div[data-baseweb="select"] div[role="option"],
+div[data-baseweb="select"] div[role="option"] * {
+  color: #e6edf3 !important;
+}
+
+/* Hover e selected */
+div[data-baseweb="select"] div[role="option"]:hover {
+  background-color: #1f232b !important;
+}
+div[data-baseweb="select"] div[role="option"][aria-selected="true"] {
+  background-color: #243040 !important;
+}
+
+/* caret */
+div[data-baseweb="select"] svg { fill: #e6edf3 !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -211,7 +238,7 @@ def t(en: str) -> str:
 # (a) tickers & date range
 default_tickers = "AAPL, MSFT, NVDA, TSLA, GOOG"
 tickers_str = st.sidebar.text_input(
-    "Tickers (comma-separated) — Yahoo Finance",
+    "Tickers (comma-separated) from Yahoo Finance",
     value=default_tickers,
     key="tickers_str",
 )
@@ -264,6 +291,7 @@ with st.sidebar.expander("Save / Load setup", expanded=False):
 # Data fetch
 # --------------------------------------------------------------------------
 st.title("Quant Insight Dashboard")
+st.info("BUILD CHECK — Optimizer UI v2 (segmented/radio) — "+ pd.Timestamp.now(tz="Europe/Rome").strftime("%Y-%m-%d %H:%M"))
 st.caption("Performance, risk and correlations for selected tickers/ETFs.")
 
 if len(tickers) < 2:
@@ -301,8 +329,20 @@ tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_backtest, tab_export = st.
 with tab_prices:
     st.subheader("Adjusted Prices")
     st.plotly_chart(prices_chart(px_df), use_container_width=True)
-    st.caption("Adjusted for dividends/splits. Table shows the latest rows.")
-    st.dataframe(px_df.tail(), use_container_width=True)
+    st.caption("Adjusted for dividends/splits. Table shows the latest rows (most recent on top).")
+
+    # 1) garantisci indice datetime
+    df_show = px_df.copy()
+    df_show.index = pd.to_datetime(df_show.index)
+
+    # 2) ordina crescente -> prendi le ultime N -> ribalta l'ordine
+    N = 5  # cambia se vuoi più/meno righe
+    df_show = df_show.sort_index(ascending=True).tail(N).iloc[::-1]
+
+    # 3) (opzionale) porta la data come colonna visibile
+    df_show = df_show.reset_index().rename(columns={"index": "Date"})
+
+    st.dataframe(df_show, use_container_width=True)
 
 # --------------------------------------------------------------------------
 # Performance
@@ -374,11 +414,15 @@ with tab_opt:
     frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1)
     show_frontier = c4.checkbox("Show frontier", value=True)
 
-    mode = st.selectbox(
-        "Optimization mode",
-        options=["max_sharpe", "min_vol", "target_return"],
-        index=0,
-    )
+    # === Optimization mode (dark-mode friendly) ===
+    _options = ["max_sharpe", "min_vol", "target_return"]
+    # etichetta palese per capire se il codice è quello nuovo
+    try:
+       mode = st.segmented_control("Optimization mode 🔧", options=_options, default="max_sharpe")
+    except Exception:
+       mode = st.radio("Optimization mode 🔧", options=_options, index=0, horizontal=True)
+
+
     if mode == "target_return":
         target_ret = st.slider("Target annual return (%)", 0.0, 40.0, 10.0, 0.5) / 100.0
     else:
