@@ -31,3 +31,21 @@ python -m venv .venv
 .venv\Scripts\activate       # Windows
 pip install -r requirements.txt
 streamlit run app/main.py
+```
+
+---
+
+
+## 🧭 Step 0 Optimization Review
+
+We documented a focused step-zero optimization assessment and priorities here:
+
+- [`docs/step-zero-optimization-review.md`](docs/step-zero-optimization-review.md)
+
+
+## 🛠️ Optimizer Developer Notes
+
+- Use `optimize_portfolio(...)`, `frontier_from_prices(...)`, and `optimize_cvar(...)` when your input is **prices**.
+- Use `optimize_portfolio_from_returns(...)`, `frontier_from_returns(...)`, and `optimize_cvar_from_returns(...)` when your input is **daily returns**.
+- Avoid implicit mixing of data contracts (do not pass returns to price entrypoints).
+
