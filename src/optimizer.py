@@ -58,11 +58,20 @@ def prepare_mv_inputs(prices: pd.DataFrame) -> MVInputs:
     return MVInputs(mu=mu, cov=cov, tickers=list(ok))
 
 
-def _portfolio_stats(w: np.ndarray, mu: pd.Series, cov: pd.DataFrame, rf: float = 0.0) -> Tuple[float, float, float]:
+def _portfolio_stats(
+    w: np.ndarray,
+    mu: pd.Series,
+    cov: pd.DataFrame,
+    rf: float = 0.0,
+    mu_vals: Optional[np.ndarray] = None,
+    cov_vals: Optional[np.ndarray] = None,
+) -> Tuple[float, float, float]:
     """Return (exp_return, vol, sharpe). rf in decimal, annualized."""
     w = _to_numpy(w)
-    exp_return = float(np.dot(w, mu.values))
-    vol = float(np.sqrt(w @ cov.values @ w))
+    mu_vals = mu.values if mu_vals is None else mu_vals
+    cov_vals = cov.values if cov_vals is None else cov_vals
+    exp_return = float(np.dot(w, mu_vals))
+    vol = float(np.sqrt(w @ cov_vals @ w))
     sharpe = (exp_return - rf) / vol if vol > 0 else -np.inf
     return exp_return, vol, sharpe
 
@@ -76,6 +85,8 @@ def _mv_optimize(
     shorting: bool = False,
     max_weight: float = 0.30,
     w0: Optional[np.ndarray] = None,
+    mu_vals: Optional[np.ndarray] = None,
+    cov_vals: Optional[np.ndarray] = None,
 ) -> Tuple[pd.Series, Tuple[float, float, float]]:
     """
     Core MV optimizer (SLSQP). Returns (weights Series, (ret, vol, sharpe)).
@@ -83,6 +94,9 @@ def _mv_optimize(
     n = len(mu)
     if n == 0:
         raise ValueError("No assets available after preprocessing.")
+
+    mu_vals = mu.values if mu_vals is None else mu_vals
+    cov_vals = cov.values if cov_vals is None else cov_vals
 
     # bounds
     lo = -max_weight if shorting else 0.0
@@ -96,19 +110,19 @@ def _mv_optimize(
         if target_return is None:
             target_return = float(mu.mean())
         # add return constraint
-        cons.append({"type": "eq", "fun": lambda w, mu=mu, tr=target_return: np.dot(w, mu.values) - tr})
+        cons.append({"type": "eq", "fun": lambda w, mu_vals=mu_vals, tr=target_return: np.dot(w, mu_vals) - tr})
 
         # objective = variance
         def obj(w):
-            return float(w @ cov.values @ w)
+            return float(w @ cov_vals @ w)
 
     elif mode == "min_vol":
         def obj(w):
-            return float(w @ cov.values @ w)
+            return float(w @ cov_vals @ w)
 
     else:  # max_sharpe
         def obj(w):
-            ret, vol, _ = _portfolio_stats(w, mu, cov, rf)
+            ret, vol, _ = _portfolio_stats(w, mu, cov, rf, mu_vals=mu_vals, cov_vals=cov_vals)
             # maximize sharpe => minimize -sharpe
             return -((ret - rf) / vol if vol > 0 else -1e6)
 
@@ -120,7 +134,7 @@ def _mv_optimize(
         raise RuntimeError(f"Optimization failed: {res.message}")
 
     w = res.x
-    ret, vol, sr = _portfolio_stats(w, mu, cov, rf)
+    ret, vol, sr = _portfolio_stats(w, mu, cov, rf, mu_vals=mu_vals, cov_vals=cov_vals)
     weights = pd.Series(w, index=mu.index, name="weight")
     return weights, (ret, vol, sr)
 
@@ -138,16 +152,28 @@ def compute_frontier(
     columns ['Return','Vol','Sharpe'] and one row per target point.
     """
     mu_vals = mu.values
+    cov_vals = cov.values
     min_tr = float(np.percentile(mu_vals, 10))
     max_tr = float(np.percentile(mu_vals, 90))
     targets = np.linspace(min_tr, max_tr, points)
 
     rows = []
+    w0: Optional[np.ndarray] = None
     for tr in targets:
         try:
-            _, stats = _mv_optimize(mu, cov, rf, mode="target_return",
-                                    target_return=float(tr),
-                                    shorting=shorting, max_weight=max_weight)
+            weights, stats = _mv_optimize(
+                mu,
+                cov,
+                rf,
+                mode="target_return",
+                target_return=float(tr),
+                shorting=shorting,
+                max_weight=max_weight,
+                w0=w0,
+                mu_vals=mu_vals,
+                cov_vals=cov_vals,
+            )
+            w0 = weights.values
             ret, vol, sr = stats
             rows.append((ret, vol, sr))
         except Exception:
@@ -158,7 +184,8 @@ def compute_frontier(
         # fall back to max sharpe single point to avoid UI breaking
         try:
             _, stats = _mv_optimize(mu, cov, rf, mode="max_sharpe",
-                                    shorting=shorting, max_weight=max_weight)
+                                    shorting=shorting, max_weight=max_weight,
+                                    mu_vals=mu_vals, cov_vals=cov_vals)
             ret, vol, sr = stats
             rows = [(ret, vol, sr)]
         except Exception:
@@ -244,90 +271,3 @@ def frontier_from_prices(
 ) -> pd.DataFrame:
     mv = prepare_mv_inputs(prices)
     return compute_frontier(mv.mu, mv.cov, rf=rf, points=points, shorting=shorting, max_weight=max_weight)
-# =============================================================================
-# COMPATIBILITY SHIM – garantisce coerenza dei nomi tra versioni diverse
-# =============================================================================
-import inspect
-import pandas as pd
-
-def _compat_call(func, **kwargs):
-    """
-    Chiama una funzione provando ad adattare i nomi degli argomenti.
-    Esempio: allow_short -> allow_shorting, max_weight -> weight_cap, n_points -> n_portfolios, ecc.
-    """
-    sig = inspect.signature(func)
-    valid = set(sig.parameters.keys())
-    alt = {
-        "allow_short": "allow_shorting",
-        "max_weight": "weight_cap",
-        "n_points": "n_portfolios",
-        "prices": "px_df",
-        "returns": "rets",
-    }
-
-    # Mappa i nomi noti
-    fixed_kwargs = {}
-    for k, v in kwargs.items():
-        if k in valid:
-            fixed_kwargs[k] = v
-        elif k in alt and alt[k] in valid:
-            fixed_kwargs[alt[k]] = v
-        # ignora quelli sconosciuti
-
-    return func(**fixed_kwargs)
-
-
-# ---------------------------------------------------------------------------
-# Wrappers di sicurezza: garantiscono che le chiamate non vadano in errore
-# ---------------------------------------------------------------------------
-try:
-    if "optimize_portfolio" in globals():
-        _orig_optimize_portfolio = optimize_portfolio
-
-        def optimize_portfolio(**kwargs):
-            try:
-                return _compat_call(_orig_optimize_portfolio, **kwargs)
-            except TypeError:
-                # fallback diretto, se non serve compat
-                return _orig_optimize_portfolio(**kwargs)
-except Exception:
-    pass
-
-
-try:
-    if "compute_frontier" in globals():
-        _orig_compute_frontier = compute_frontier
-
-        def compute_frontier(*args, **kwargs):
-            try:
-                res = _compat_call(_orig_compute_frontier, **kwargs)
-            except TypeError:
-                res = _orig_compute_frontier(*args, **kwargs)
-
-            # Assicura sempre un DataFrame come output
-            if isinstance(res, (tuple, list)) and any(isinstance(x, pd.DataFrame) for x in res):
-                for x in res:
-                    if isinstance(x, pd.DataFrame):
-                        return x
-            if isinstance(res, dict):
-                for v in res.values():
-                    if isinstance(v, pd.DataFrame):
-                        return v
-            if isinstance(res, pd.DataFrame):
-                return res
-            return pd.DataFrame()
-except Exception:
-    pass
-
-
-try:
-    if "optimize_cvar" in globals():
-        _orig_optimize_cvar = optimize_cvar
-
-        def optimize_cvar(**kwargs):
-            try:
-                return _compat_call(_orig_optimize_cvar, **kwargs)
-            except TypeError:
-                return _orig_optimize_cvar(**kwargs)
-except Exception:
-    pass

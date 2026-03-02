@@ -86,29 +86,16 @@ div[data-baseweb="select"] svg { fill: #e6edf3 !important; }
 # --------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------
-def _try_compute_frontier(px_df, rf, n_points, allow_short=None, max_weight=None):
-    """Try calling compute_frontier with different known signatures."""
-    from src.optimizer import compute_frontier
-    from src.analytics import to_returns
-    try:
-        return compute_frontier(
-            prices=px_df, rf=rf, n_points=n_points,
-            **({} if allow_short is None else {"allow_short": allow_short}),
-            **({} if max_weight is None else {"max_weight": max_weight}),
-        )
-    except TypeError:
-        pass
-    try:
-        return compute_frontier(px_df, rf, n_points)
-    except TypeError:
-        pass
-    try:
-        _rets = to_returns(px_df)
-        return compute_frontier(returns=_rets, rf=rf, n_points=n_points)
-    except TypeError:
-        pass
-    _rets = to_returns(px_df)
-    return compute_frontier(_rets)
+def _compute_frontier(px_df, rf, n_points, shorting=False, max_weight=0.30):
+    """Compute efficient frontier using canonical optimizer API."""
+    from src.optimizer import frontier_from_prices
+    return frontier_from_prices(
+        prices=px_df,
+        rf=rf,
+        points=n_points,
+        shorting=shorting,
+        max_weight=max_weight,
+    )
 
 def _try_build_html_report(prices, summary, corr_df):
     """Try different kw for build_html_report and return bytes."""
@@ -440,7 +427,7 @@ with tab_opt:
             prices=px_df,
             rf=rf/100.0,
             mode=mode,
-            allow_short=allow_short,
+            shorting=allow_short,
             max_weight=max_cap,
         )
         if mode == "target_return" and target_ret is not None:
@@ -465,9 +452,9 @@ with tab_opt:
         k3.metric("Sharpe (MV)", f"{mv_kpi['sharpe']:.2f}")
 
         if show_frontier:
-            fr_raw = _try_compute_frontier(
+            fr_raw = _compute_frontier(
                 px_df, rf=rf/100.0, n_points=frontier_points,
-                allow_short=allow_short, max_weight=max_cap
+                shorting=allow_short, max_weight=max_cap
             )
             fr = _normalize_frontier(fr_raw)
             st.plotly_chart(frontier_chart(fr), use_container_width=True)
@@ -486,7 +473,7 @@ with tab_opt:
         cv_kwargs = dict(
             prices=px_df,
             alpha=alpha,
-            allow_short=allow_short,
+            shorting=allow_short,
             max_weight=max_cap,
         )
         cv_out = optimize_cvar(**cv_kwargs)
