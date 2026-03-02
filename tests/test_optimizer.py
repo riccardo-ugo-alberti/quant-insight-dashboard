@@ -7,8 +7,11 @@ import pytest
 
 from src.optimizer import (
     optimize_portfolio,
+    optimize_portfolio_from_returns,
     compute_frontier,
+    frontier_from_returns,
     optimize_cvar,
+    optimize_cvar_from_returns,
     prepare_mv_inputs,
 )
 
@@ -146,3 +149,24 @@ def test_frontier_points_validation():
     mv = prepare_mv_inputs(prices)
     with pytest.raises(ValueError, match="points must be >= 2"):
         compute_frontier(mv.mu, mv.cov, points=1)
+
+
+def test_explicit_returns_entrypoints_match_price_flow():
+    returns = _make_fake_returns()
+    prices = _returns_to_prices(returns)
+
+    w_p, stats_p, mv_p = optimize_portfolio(prices=prices, mode="max_sharpe", shorting=False, max_weight=0.50)
+    w_r, stats_r, mv_r = optimize_portfolio_from_returns(returns=returns, mode="max_sharpe", shorting=False, max_weight=0.50)
+
+    assert list(mv_p.mu.index) == list(mv_r.mu.index)
+    assert np.isfinite(w_r.values).all()
+    assert abs(w_r.sum() - 1.0) < 1e-6
+    assert np.isfinite(stats_r[0]) and np.isfinite(stats_r[1])
+
+    f_r = frontier_from_returns(returns=returns, rf=0.01, points=12, shorting=False, max_weight=0.50)
+    assert len(f_r) >= 5
+    assert set(["Return", "Vol", "Sharpe"]).issubset(f_r.columns)
+
+    cvar_r = optimize_cvar_from_returns(returns=returns, alpha=0.95, shorting=False, max_weight=0.50)
+    if cvar_r is not None:
+        assert abs(cvar_r.sum() - 1.0) < 1e-6

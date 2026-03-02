@@ -74,22 +74,38 @@ class MVInputs:
     tickers: List[str]
 
 
+def _mv_inputs_from_returns(returns: pd.DataFrame) -> MVInputs:
+    """Build MV inputs from a daily returns DataFrame."""
+    rets = returns.dropna(how="all")
+    if rets.empty:
+        raise ValueError("No return observations available after dropping NaNs.")
+
+    mu_d = rets.mean()
+    cov_d = rets.cov()
+    mu = _annualize_mean(mu_d)
+    cov = _annualize_cov(cov_d)
+
+    ok = cov.columns[(np.diag(cov.values) > 0)]
+    if len(ok) == 0:
+        raise ValueError("No assets with positive variance available for optimization.")
+
+    mu = mu.loc[ok]
+    cov = cov.loc[ok, ok]
+    return MVInputs(mu=mu, cov=cov, tickers=list(ok))
+
+
 def prepare_mv_inputs(prices: pd.DataFrame) -> MVInputs:
     """
     From a price DataFrame (index: date, cols: tickers) create annualized
     expected returns and covariance for MV optimization.
     """
     rets = prices.pct_change().dropna(how="all")
-    mu_d = rets.mean()
-    cov_d = rets.cov()
+    return _mv_inputs_from_returns(rets)
 
-    mu = _annualize_mean(mu_d)
-    cov = _annualize_cov(cov_d)
 
-    ok = cov.columns[(np.diag(cov.values) > 0)]
-    mu = mu.loc[ok]
-    cov = cov.loc[ok, ok]
-    return MVInputs(mu=mu, cov=cov, tickers=list(ok))
+def prepare_mv_inputs_from_returns(returns: pd.DataFrame) -> MVInputs:
+    """Explicit variant of MV input preparation for daily returns."""
+    return _mv_inputs_from_returns(returns)
 
 
 def _portfolio_stats(
@@ -273,6 +289,20 @@ def optimize_portfolio(
     return w, stats, mv
 
 
+def optimize_portfolio_from_returns(
+    returns: pd.DataFrame,
+    rf: float = 0.0,
+    mode: Literal["max_sharpe", "min_vol", "target_return"] = "max_sharpe",
+    target_return: Optional[float] = None,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+) -> Tuple[pd.Series, Tuple[float, float, float], MVInputs]:
+    """Explicit MV optimizer entrypoint for daily returns input."""
+    mv = prepare_mv_inputs_from_returns(returns)
+    w, stats = _mv_optimize(mv.mu, mv.cov, rf, mode, target_return, shorting, max_weight)
+    return w, stats, mv
+
+
 # ---------- CVaR optimizer (optional)
 
 def optimize_cvar(
@@ -320,6 +350,21 @@ def optimize_cvar(
     return weights
 
 
+
+
+def optimize_cvar_from_returns(
+    returns: pd.DataFrame,
+    alpha: float = 0.95,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+) -> Optional[pd.Series]:
+    """Explicit CVaR optimizer entrypoint for daily returns input."""
+    if returns.empty:
+        return None
+    prices_proxy = (1.0 + returns).cumprod()
+    return optimize_cvar(prices=prices_proxy, alpha=alpha, shorting=shorting, max_weight=max_weight)
+
+
 # ---------- Convenience for the UI (one consistent API)
 
 def frontier_from_prices(
@@ -330,4 +375,16 @@ def frontier_from_prices(
     max_weight: float = 0.30,
 ) -> pd.DataFrame:
     mv = prepare_mv_inputs(prices)
+    return compute_frontier(mv.mu, mv.cov, rf=rf, points=points, shorting=shorting, max_weight=max_weight)
+
+
+def frontier_from_returns(
+    returns: pd.DataFrame,
+    rf: float = 0.0,
+    points: int = 25,
+    shorting: bool = False,
+    max_weight: float = 0.30,
+) -> pd.DataFrame:
+    """Explicit efficient frontier entrypoint for daily returns input."""
+    mv = prepare_mv_inputs_from_returns(returns)
     return compute_frontier(mv.mu, mv.cov, rf=rf, points=points, shorting=shorting, max_weight=max_weight)

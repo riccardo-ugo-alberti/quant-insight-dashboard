@@ -37,10 +37,11 @@ Goal: agree on the highest-impact improvements before larger refactors.
 ## Progress update
 
 - [x] Step 3 implemented: added input validation and richer optimizer/frontier diagnostics.
+- [x] Step 4 implemented: introduced explicit price-vs-returns optimizer entrypoints.
 
 ## Proposed immediate next tasks
 
 - [x] Refactor optimizer signatures and remove compatibility wrappers.
 - [x] Update tests to match canonical API and expected return types.
 - [x] Implement warm-start frontier loop + micro-benchmark test.
-- [ ] Update README developer notes with optimization conventions.
+- [x] Update README developer notes with optimization conventions.
