@@ -192,18 +192,6 @@ def _mv_optimize(
     if w0 is None:
         w0 = np.ones(n) / n
 
-<<<<<<< ours
-    res = minimize(obj, w0, method="SLSQP", bounds=bnds, constraints=cons, options={"maxiter": 1000})
-    if not res.success:
-        raise RuntimeError(
-            "Optimization failed "
-            f"(mode={mode}, shorting={shorting}, max_weight={max_weight:.4f}, "
-            f"target_return={target_return}, status={res.status}): {res.message}"
-        )
-
-    w = res.x
-    ret, vol, sr = _portfolio_stats(w, mu, cov, rf, mu_vals=mu_vals, cov_vals=cov_vals)
-=======
     starts = [w0]
     if mode == "min_vol":
         rng = np.random.default_rng(7)
@@ -212,19 +200,36 @@ def _mv_optimize(
             starts.append(v / v.sum())
 
     best_res = None
+    last_fail = None
     for w_start in starts:
-        cand = minimize(obj, w_start, method="SLSQP", bounds=bnds, constraints=cons, options={"maxiter": 2000, "ftol": 1e-12})
+        cand = minimize(
+            obj,
+            w_start,
+            method="SLSQP",
+            bounds=bnds,
+            constraints=cons,
+            options={"maxiter": 2000, "ftol": 1e-12},
+        )
         if not cand.success:
+            last_fail = cand
             continue
         if best_res is None or cand.fun < best_res.fun:
             best_res = cand
 
     if best_res is None:
-        raise RuntimeError("Optimization failed: no feasible solution")
+        fail_msg = (
+            f"status={last_fail.status}, message={last_fail.message}"
+            if last_fail is not None
+            else "no candidate solution"
+        )
+        raise RuntimeError(
+            "Optimization failed "
+            f"(mode={mode}, shorting={shorting}, max_weight={max_weight:.4f}, "
+            f"target_return={target_return}, {fail_msg})"
+        )
 
     w = best_res.x
-    ret, vol, sr = _portfolio_stats(w, mu, cov, rf)
->>>>>>> theirs
+    ret, vol, sr = _portfolio_stats(w, mu, cov, rf, mu_vals=mu_vals, cov_vals=cov_vals)
     weights = pd.Series(w, index=mu.index, name="weight")
     return weights, (ret, vol, sr)
 
@@ -399,190 +404,7 @@ def frontier_from_prices(
 ) -> pd.DataFrame:
     mv = prepare_mv_inputs(prices)
     return compute_frontier(mv.mu, mv.cov, rf=rf, points=points, shorting=shorting, max_weight=max_weight)
-<<<<<<< ours
-=======
-# =============================================================================
-# COMPATIBILITY SHIM – garantisce coerenza dei nomi tra versioni diverse
-# =============================================================================
-import inspect
-import pandas as pd
 
-
-
-class CompatResult(dict):
-    """Dict-like result with attribute access for backward compatibility."""
-
-    def __getattr__(self, name):
-        try:
-            return self[name]
-        except KeyError as exc:
-            raise AttributeError(name) from exc
-
-
-def _as_compat_result_from_mv(out):
-    if isinstance(out, CompatResult):
-        return out
-    if isinstance(out, tuple) and len(out) >= 2:
-        weights = out[0]
-        stats = out[1] if isinstance(out[1], tuple) and len(out[1]) >= 3 else (np.nan, np.nan, np.nan)
-        exp_return, exp_vol, sharpe = float(stats[0]), float(stats[1]), float(stats[2])
-        data = CompatResult(
-            weights=weights,
-            exp_return=exp_return,
-            exp_vol=exp_vol,
-            sharpe=sharpe,
-            ret=exp_return,
-            vol=exp_vol,
-            message="ok",
-        )
-        data["return"] = exp_return
-        if len(out) >= 3:
-            data["mv_inputs"] = out[2]
-        return data
-    tmp = CompatResult(weights=out, exp_return=np.nan, exp_vol=np.nan, sharpe=np.nan, ret=np.nan, vol=np.nan, message="ok")
-    tmp["return"] = np.nan
-    return tmp
-
-
-def _as_compat_result_from_cvar(out, prices=None, message="ok"):
-    weights = out
-    exp_return = np.nan
-    exp_vol = np.nan
-    if isinstance(weights, pd.Series) and prices is not None and not prices.empty:
-        rets = prices.pct_change().dropna(how="all")
-        if not rets.empty:
-            mu = rets.mean() * 252.0
-            cov = rets.cov() * 252.0
-            w = weights.reindex(mu.index).fillna(0.0).values
-            exp_return = float(np.dot(w, mu.values))
-            exp_vol = float(np.sqrt(np.dot(w, cov.values @ w)))
-    tmp = CompatResult(weights=weights, exp_return=exp_return, exp_vol=exp_vol, sharpe=np.nan, ret=exp_return, vol=exp_vol, message=message)
-    tmp["return"] = exp_return
-    return tmp
-def _prices_from_returns(rets: pd.DataFrame) -> pd.DataFrame:
-    """Build a synthetic price path from returns for compatibility wrappers."""
-    if rets is None or rets.empty:
-        raise ValueError("returns cannot be empty")
-    clean = rets.dropna(how="all").fillna(0.0)
-    return (1.0 + clean).cumprod()
-
-
-def _extract_returns_or_prices(kwargs):
-    prices = kwargs.get("prices")
-    returns = kwargs.get("returns")
-    if prices is None and returns is not None:
-        prices = _prices_from_returns(returns)
-    return prices, returns
-
-
-def _compat_call(func, **kwargs):
-    """
-    Chiama una funzione provando ad adattare i nomi degli argomenti.
-    Esempio: allow_short -> allow_shorting, max_weight -> weight_cap, n_points -> n_portfolios, ecc.
-    """
-    sig = inspect.signature(func)
-    valid = set(sig.parameters.keys())
-    alt = {
-        "allow_short": "shorting",
-<<<<<<< ours
-        "max_weight": "max_weight",
-        "n_points": "points",
-        "prices": "px_df",
-        "returns": "rets",
-=======
-        "n_points": "points",
->>>>>>> theirs
-    }
-
-    # Mappa i nomi noti
-    fixed_kwargs = {}
-    for k, v in kwargs.items():
-        if k in valid:
-            fixed_kwargs[k] = v
-        elif k in alt and alt[k] in valid:
-            fixed_kwargs[alt[k]] = v
-        # ignora quelli sconosciuti
-
-    return func(**fixed_kwargs)
-
-
-# ---------------------------------------------------------------------------
-# Wrappers di sicurezza: garantiscono che le chiamate non vadano in errore
-# ---------------------------------------------------------------------------
-try:
-    if "optimize_portfolio" in globals():
-        _orig_optimize_portfolio = optimize_portfolio
-
-        def optimize_portfolio(**kwargs):
-            prices, _ = _extract_returns_or_prices(kwargs)
-            if prices is not None:
-                kwargs["prices"] = prices
-            try:
-                return _as_compat_result_from_mv(_compat_call(_orig_optimize_portfolio, **kwargs))
-            except TypeError:
-                # fallback diretto, se non serve compat
-                direct = {k: v for k, v in kwargs.items() if k != "returns"}
-                return _as_compat_result_from_mv(_orig_optimize_portfolio(**direct))
-except Exception:
-    pass
-
-
-try:
-    if "compute_frontier" in globals():
-        _orig_compute_frontier = compute_frontier
-
-        def compute_frontier(*args, **kwargs):
-<<<<<<< ours
-            # UI/backward-compat: compute_frontier(prices_df, rf, n_points, ...)
-            if args and isinstance(args[0], pd.DataFrame):
-                first = args[0]
-                if len(args) < 2 or not isinstance(args[1], pd.DataFrame):
-                    rf = float(args[1]) if len(args) > 1 else float(kwargs.pop("rf", 0.0))
-                    points = int(args[2]) if len(args) > 2 else int(kwargs.pop("n_points", kwargs.pop("points", 25)))
-                    shorting = bool(kwargs.pop("allow_short", kwargs.pop("shorting", False)))
-                    max_weight = float(kwargs.pop("max_weight", 0.30))
-                    return frontier_from_prices(
-                        prices=first,
-                        rf=rf,
-                        points=points,
-                        shorting=shorting,
-                        max_weight=max_weight,
-                    )
-
-=======
-            prices, returns = _extract_returns_or_prices(kwargs)
-            if returns is not None and ("mu" not in kwargs and "cov" not in kwargs):
-                kwargs["mu"] = _annualize_mean(returns.mean())
-                kwargs["cov"] = _annualize_cov(returns.cov())
-            elif prices is not None and ("mu" not in kwargs and "cov" not in kwargs):
-                mv = prepare_mv_inputs(prices)
-                kwargs["mu"] = mv.mu
-                kwargs["cov"] = mv.cov
->>>>>>> theirs
-            try:
-                res = _compat_call(_orig_compute_frontier, **kwargs)
-            except TypeError:
-                direct = {k: v for k, v in kwargs.items() if k not in {"returns", "prices"}}
-                res = _orig_compute_frontier(*args, **direct)
-
-            # Assicura sempre un DataFrame come output
-            if isinstance(res, (tuple, list)) and any(isinstance(x, pd.DataFrame) for x in res):
-                for x in res:
-                    if isinstance(x, pd.DataFrame):
-                        return x
-            if isinstance(res, dict):
-                for v in res.values():
-                    if isinstance(v, pd.DataFrame):
-                        return v
-            if isinstance(res, pd.DataFrame):
-                return res
-            return pd.DataFrame()
-except Exception:
-    pass
->>>>>>> theirs
-
-
-<<<<<<< ours
 def frontier_from_returns(
     returns: pd.DataFrame,
     rf: float = 0.0,
@@ -593,20 +415,4 @@ def frontier_from_returns(
     """Explicit efficient frontier entrypoint for daily returns input."""
     mv = prepare_mv_inputs_from_returns(returns)
     return compute_frontier(mv.mu, mv.cov, rf=rf, points=points, shorting=shorting, max_weight=max_weight)
-=======
-try:
-    if "optimize_cvar" in globals():
-        _orig_optimize_cvar = optimize_cvar
 
-        def optimize_cvar(**kwargs):
-            prices, _ = _extract_returns_or_prices(kwargs)
-            if prices is not None:
-                kwargs["prices"] = prices
-            try:
-                return _as_compat_result_from_cvar(_compat_call(_orig_optimize_cvar, **kwargs), prices=kwargs.get("prices"))
-            except TypeError:
-                direct = {k: v for k, v in kwargs.items() if k != "returns"}
-                return _as_compat_result_from_cvar(_orig_optimize_cvar(**direct), prices=direct.get("prices"))
-except Exception:
-    pass
->>>>>>> theirs
