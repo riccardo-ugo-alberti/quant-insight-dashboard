@@ -222,6 +222,16 @@ st.sidebar.header("Parameters")
 def t(en: str) -> str:
     return en
 
+
+def section_header(title: str, info_md: str) -> None:
+    """Render a section title with a small info icon + popover."""
+    col_title, col_info = st.columns([0.94, 0.06])
+    with col_title:
+        st.subheader(title)
+    with col_info:
+        with st.popover("ⓘ"):
+            st.markdown(info_md)
+
 # (a) tickers & date range
 default_tickers = "AAPL, MSFT, NVDA, TSLA, GOOG"
 tickers_str = st.sidebar.text_input(
@@ -313,7 +323,19 @@ tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_backtest, tab_export = st.
 # Prices
 # --------------------------------------------------------------------------
 with tab_prices:
-    st.subheader("Adjusted Prices")
+    section_header(
+        "Adjusted Prices",
+        """
+**What is it?**  
+Historical prices adjusted for corporate actions.
+
+**How it is computed**  
+- `Adjusted Price_t` = `Close_t` corrected for splits and dividends.
+- Source: Yahoo Finance adjusted close series.
+
+This makes returns more comparable over long periods.
+""",
+    )
     st.plotly_chart(prices_chart(px_df), use_container_width=True)
     st.caption("Adjusted for dividends/splits. Table shows the latest rows (most recent on top).")
 
@@ -334,12 +356,35 @@ with tab_prices:
 # Performance
 # --------------------------------------------------------------------------
 with tab_perf:
-    st.subheader("Cumulative Returns")
+    section_header(
+        "Cumulative Returns",
+        """
+**What is it?**  
+Normalized performance of each asset from the start date.
+
+**Formula**  
+`Cumulative_t = Price_t / Price_0`
+
+Interpretation: value of 1.30 means +30% vs initial date.
+""",
+    )
     st.plotly_chart(perf_cum_chart(px_df), use_container_width=True)
     st.caption("Prices normalized at start (t=0): Performance_t = Price_t / Price_0.")
 
-    st.subheader("Risk vs Return (annualized)")
-    st.plotly_chart(rr_scatter(summary), use_container_width=True)
+    section_header(
+        "Risk vs Return (annualized)",
+        """
+**What is it?**  
+Scatter plot of expected annual return vs annual volatility.
+
+**Formulas**  
+- `Return_ann ≈ (1 + mean(daily_return))^252 - 1`
+- `Vol_ann = std(daily_return) * sqrt(252)`
+
+Each point is one asset/ticker.
+""",
+    )
+    st.plotly_chart(rr_scatter(summary, show_ols=False), use_container_width=True)
 
     st.markdown("**Summary (annualized)**")
     st.dataframe(
@@ -357,7 +402,18 @@ with tab_perf:
 # Volatility
 # --------------------------------------------------------------------------
 with tab_vol:
-    st.subheader(f"Rolling Volatility (window = {window} days, annualized)")
+    section_header(
+        f"Rolling Volatility (window = {window} days, annualized)",
+        f"""
+**What is it?**  
+Time-varying risk computed on a moving window.
+
+**Formula**  
+`RollingVol_t = std(daily_returns[t-{window}:t]) * sqrt(252)`
+
+Higher values indicate more unstable returns.
+""",
+    )
     st.plotly_chart(vol_chart(vol_roll), use_container_width=True)
     st.caption("Annualized volatility = std of daily returns within the window × √252 (data in decimals, chart shown in %).")
     with st.expander("Volatility details"):
@@ -371,11 +427,26 @@ with tab_vol:
 # Correlation
 # --------------------------------------------------------------------------
 with tab_corr:
-    st.subheader("Correlation matrix (ordered)")
+    section_header(
+        "Correlation matrix (ordered)",
+        """
+**What is it?**  
+Pearson correlation between daily returns of each pair of assets.
+
+**Formula**  
+`corr(X, Y) = cov(X, Y) / (std(X) * std(Y))`
+
+Values range from -1 (opposite moves) to +1 (same direction).
+""",
+    )
     st.plotly_chart(corr_heatmap(cm), use_container_width=True)
     st.caption("Pearson correlations of daily returns.")
 
     st.markdown("**Pairwise rolling correlation**")
+    with st.popover("ⓘ Pairwise correlation"):
+        st.markdown(
+            f"Computed as rolling Pearson correlation on **{window}** daily observations for the selected pair."
+        )
     pairs = []
     for i in range(len(tickers)):
         for j in range(i + 1, len(tickers)):
@@ -392,7 +463,18 @@ with tab_corr:
 # Optimizer
 # --------------------------------------------------------------------------
 with tab_opt:
-    st.subheader("Optimizer")
+    section_header(
+        "Optimizer",
+        """
+**What is it?**  
+Mean-Variance optimization under weight constraints.
+
+**Objective (Max Sharpe)**  
+maximize `(w^T μ - r_f) / sqrt(w^T Σ w)`
+
+with constraints such as `sum(w)=1` and per-asset weight bounds.
+""",
+    )
 
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     allow_short = c1.checkbox("Allow shorting", value=False)
@@ -465,7 +547,18 @@ with tab_opt:
         st.warning(f"MV optimization error: {e}")
 
     st.markdown("---")
-    st.subheader("CVaR Optimizer (Expected Shortfall)")
+    section_header(
+        "CVaR Optimizer (Expected Shortfall)",
+        """
+**What is it?**  
+Optimization focused on tail risk rather than variance.
+
+**Intuition**  
+CVaR measures the average loss in the worst `α%` scenarios.
+
+Useful when downside risk matters more than symmetric volatility.
+""",
+    )
     alpha = st.slider("Confidence (1−α)", min_value=0.80, max_value=0.99, value=0.95, step=0.01)
 
     # ===== CVaR optimize =====
@@ -496,7 +589,24 @@ with tab_opt:
 # Dynamic Backtest (clean layout)
 # --------------------------------------------------------------------------
 with tab_backtest:
-    st.markdown('<div class="qid-h1">DYNAMIC BACKTEST</div>', unsafe_allow_html=True)
+    bt_title_col, bt_info_col = st.columns([0.94, 0.06])
+    with bt_title_col:
+        st.markdown('<div class="qid-h1">DYNAMIC BACKTEST</div>', unsafe_allow_html=True)
+    with bt_info_col:
+        with st.popover("ⓘ"):
+            st.markdown(
+                """
+**What is it?**  
+Out-of-sample simulation with periodic rebalancing.
+
+**How it works**  
+- Estimate moments with Rolling/EWMA.
+- Build weights with MV objective and constraints.
+- Apply turnover, commissions and slippage at each rebalance.
+
+Outputs include NAV, turnover, costs and evolving weights.
+"""
+            )
     st.markdown('<div class="qid-sub">Rolling / EWMA engine with covariance shrinkage & trading costs</div>', unsafe_allow_html=True)
     st.divider()
 
@@ -638,7 +748,12 @@ with tab_backtest:
 # Data / Export
 # --------------------------------------------------------------------------
 with tab_export:
-    st.subheader("Data / Export")
+    section_header(
+        "Data / Export",
+        """
+Download the current analysis outputs (tables/reports) for documentation and reuse.
+""",
+    )
     st.caption("Download raw session data (prices, correlations) and a one-click HTML report.")
     c1, c2 = st.columns(2)
 
