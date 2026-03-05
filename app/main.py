@@ -65,6 +65,20 @@ div[data-baseweb="input"] > div {
   border-color: #2a2f3a !important;
 }
 div[data-baseweb="select"] svg { fill: #e6edf3 !important; }
+
+/* Minimal open-menu text fix (global): keep option labels visible */
+div[role="listbox"] [role="option"],
+div[role="listbox"] [role="option"] *,
+ul[role="listbox"] li,
+ul[role="listbox"] li *,
+ul[data-testid="stSelectboxVirtualDropdown"] li,
+ul[data-testid="stSelectboxVirtualDropdown"] li *,
+div[data-testid="stMultiSelectPopover"] [role="option"],
+div[data-testid="stMultiSelectPopover"] [role="option"] * {
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+  opacity: 1 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
