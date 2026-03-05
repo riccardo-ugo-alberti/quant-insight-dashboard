@@ -206,11 +206,11 @@ def _with_date(df: pd.DataFrame) -> pd.DataFrame:
 
 # ===== App modules =============================================================
 from src.data_loader import fetch_prices
-from src.analytics   import compute_summary, to_returns, rolling_vol
+from src.analytics   import compute_summary, to_returns, rolling_vol, simulate_portfolio_paths
 from src.optimizer   import optimize_portfolio, optimize_cvar
 from src.visuals     import (
     prices_chart, perf_cum_chart, rr_scatter, vol_chart, corr_heatmap,
-    frontier_chart, weights_donut, weights_pie,
+    frontier_chart, weights_donut, weights_pie, monte_carlo_paths_chart,
 )
 # ==============================================================================
 
@@ -521,6 +521,35 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
             weights_donut(mv_weights, title="Portfolio Weights (MV)"),
             use_container_width=True
         )
+
+        st.markdown("**Monte Carlo simulation (future portfolio paths)**")
+        mc_col1, mc_col2, mc_col3 = st.columns([1, 1, 1])
+        mc_horizon = mc_col1.slider("Horizon (trading days)", min_value=21, max_value=756, value=252, step=21)
+        mc_sims = mc_col2.slider("Number of simulations", min_value=50, max_value=1500, value=300, step=50)
+        mc_seed = mc_col3.number_input("Random seed", min_value=0, max_value=99999, value=42, step=1)
+
+        if st.button("Run Monte Carlo", key="run_mc_optimizer"):
+            try:
+                sim_paths = simulate_portfolio_paths(
+                    returns=ret,
+                    weights=mv_weights,
+                    horizon_days=int(mc_horizon),
+                    n_sims=int(mc_sims),
+                    initial_value=100.0,
+                    random_seed=int(mc_seed),
+                )
+                st.plotly_chart(
+                    monte_carlo_paths_chart(sim_paths, title="Monte Carlo Projection (MV Portfolio)"),
+                    use_container_width=True,
+                )
+                end_vals = sim_paths.iloc[-1]
+                p10, p50, p90 = np.percentile(end_vals.values, [10, 50, 90])
+                mc_k1, mc_k2, mc_k3 = st.columns(3)
+                mc_k1.metric("P10 final value", f"{p10:.2f}")
+                mc_k2.metric("Median final value", f"{p50:.2f}")
+                mc_k3.metric("P90 final value", f"{p90:.2f}")
+            except Exception as mc_err:
+                st.warning(f"Monte Carlo simulation error: {mc_err}")
 
         # KPI (if not provided, compute from weights)
         if isinstance(mv_out, dict) and all(k in mv_out for k in ("return", "vol", "sharpe")):

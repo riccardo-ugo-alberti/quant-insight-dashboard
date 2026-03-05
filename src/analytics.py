@@ -10,6 +10,7 @@ __all__ = [
     "compute_corr_matrix",
     "rolling_vol",
     "rolling_volatility",
+    "simulate_portfolio_paths",
 ]
 
 # ---------------------------------------------------------------------
@@ -128,3 +129,47 @@ def rolling_vol(
 def rolling_volatility(prices_or_returns: pd.DataFrame, window: int = 90, freq: int = 252):
     """Alias retro-compatibile di rolling_vol."""
     return rolling_vol(prices_or_returns, window=window, freq=freq)
+
+
+def simulate_portfolio_paths(
+    returns: pd.DataFrame,
+    weights: pd.Series,
+    horizon_days: int = 252,
+    n_sims: int = 300,
+    initial_value: float = 100.0,
+    random_seed: int = 42,
+) -> pd.DataFrame:
+    """
+    Monte Carlo simulation of portfolio value paths using a multivariate normal model
+    fitted on historical daily returns.
+    """
+    if returns is None or returns.empty:
+        raise ValueError("returns cannot be empty")
+    if weights is None or len(weights) == 0:
+        raise ValueError("weights cannot be empty")
+    if horizon_days < 1 or n_sims < 1:
+        raise ValueError("horizon_days and n_sims must be >= 1")
+
+    clean_r = returns.dropna(how="all").astype(float)
+    tickers = [t for t in weights.index if t in clean_r.columns]
+    if not tickers:
+        raise ValueError("weights index does not overlap returns columns")
+
+    aligned = clean_r[tickers].dropna(how="any")
+    if aligned.empty:
+        raise ValueError("No valid returns after aligning weights and returns")
+
+    w = weights.reindex(tickers).fillna(0.0).astype(float)
+    w = w / w.sum()
+
+    mu = aligned.mean().values
+    cov = aligned.cov().values
+    rng = np.random.default_rng(random_seed)
+
+    sim_asset_returns = rng.multivariate_normal(mu, cov, size=(horizon_days, n_sims))
+    sim_port_returns = np.tensordot(sim_asset_returns, w.values, axes=([2], [0]))
+
+    values = initial_value * np.cumprod(1.0 + sim_port_returns, axis=0)
+    values = np.vstack([np.full((1, n_sims), initial_value), values])
+    idx = pd.RangeIndex(start=0, stop=horizon_days + 1, step=1, name="Day")
+    return pd.DataFrame(values, index=idx, columns=[f"Sim {i+1}" for i in range(n_sims)])

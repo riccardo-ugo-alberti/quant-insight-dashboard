@@ -428,3 +428,77 @@ def weights_area(weights_df: pd.DataFrame, title: str = "Weights over time (stac
     fig.update_yaxes(title="Weight (%)", tickfont=_AXIS_FONT)
     return fig
 
+
+
+# ---------------------------------------------------------------------
+# 7) Monte Carlo portfolio paths
+# ---------------------------------------------------------------------
+def monte_carlo_paths_chart(paths_df: pd.DataFrame, title: str = "Monte Carlo Portfolio Paths") -> go.Figure:
+    if paths_df is None or paths_df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            template=_DEF_TEMPLATE,
+            title=dict(text=f"{title} (no data)", font=_TITLE_FONT),
+            margin=dict(l=10, r=10, t=60, b=10),
+        )
+        return fig
+
+    fig = go.Figure()
+    for col in paths_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=paths_df.index,
+                y=paths_df[col],
+                mode="lines",
+                line=dict(width=1),
+                opacity=0.20,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    p10 = paths_df.quantile(0.10, axis=1)
+    p50 = paths_df.quantile(0.50, axis=1)
+    p90 = paths_df.quantile(0.90, axis=1)
+
+    fig.add_trace(
+        go.Scatter(
+            x=paths_df.index,
+            y=p10,
+            mode="lines",
+            name="Bottom 10%",
+            line=dict(width=2.5, dash="dot", color="#5DADE2"),
+            hovertemplate="Bottom 10%: %{y:.2f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=paths_df.index,
+            y=p50,
+            mode="lines",
+            name="Median",
+            line=dict(width=3.5, color="#F39C12"),
+            hovertemplate="Median: %{y:.2f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=paths_df.index,
+            y=p90,
+            mode="lines",
+            name="Top 10%",
+            line=dict(width=2.5, dash="dot", color="#58D68D"),
+            hovertemplate="Top 10%: %{y:.2f}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        template=_DEF_TEMPLATE,
+        title=dict(text=title, font=_TITLE_FONT),
+        margin=dict(l=10, r=10, t=60, b=10),
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
+        hovermode="x unified",
+    )
+    fig.update_xaxes(title="Day", tickfont=_AXIS_FONT)
+    fig.update_yaxes(title="Portfolio value", tickfont=_AXIS_FONT)
+    return fig
