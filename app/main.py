@@ -233,7 +233,7 @@ def section_header(title: str, info_md: str) -> None:
             st.markdown(info_md)
 
 # (a) tickers & date range
-default_tickers = "AAPL, MSFT, NVDA, TSLA, GOOG"
+default_tickers = "SPY, QQQ, IWM, EFA, EEM, TLT, LQD, GLD, USO, AAPL, MSFT, NVDA"
 tickers_str = st.sidebar.text_input(
     "Tickers (comma-separated) from Yahoo Finance",
     value=default_tickers,
