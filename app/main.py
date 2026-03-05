@@ -197,6 +197,19 @@ def _mv_kpi_from_weights(px_df, weights_series, rf_annual):
     sharpe = (port_ret - rf_annual) / port_vol if port_vol > 0 else float("nan")
     return dict(return_=port_ret, vol=port_vol, sharpe=sharpe)
 
+def _historical_nav_from_weights(px_df, weights_series, initial_value: float = 100.0) -> pd.DataFrame:
+    """Static-weights historical NAV built from asset daily returns."""
+    rets = to_returns(px_df).dropna(how="all")
+    if rets.empty:
+        return pd.DataFrame(columns=["nav"])
+    w = weights_series.reindex(rets.columns).fillna(0.0).astype(float)
+    if float(w.sum()) == 0.0:
+        return pd.DataFrame(columns=["nav"])
+    w = w / w.sum()
+    port_rets = rets.fillna(0.0).mul(w, axis=1).sum(axis=1)
+    nav = initial_value * (1.0 + port_rets).cumprod()
+    return nav.to_frame(name="nav")
+
 def _with_date(df: pd.DataFrame) -> pd.DataFrame:
     out = df.reset_index()
     first_col = out.columns[0]
@@ -233,7 +246,7 @@ def section_header(title: str, info_md: str) -> None:
             st.markdown(info_md)
 
 # (a) tickers & date range
-default_tickers = "SPY, QQQ, IWM, EFA, EEM, TLT, LQD, GLD, USO, AAPL, MSFT, NVDA"
+default_tickers = "SPY, QQQ, IWM, EFA, EEM, TLT, LQD, GLD, USO, AAPL, MSFT"
 tickers_str = st.sidebar.text_input(
     "Tickers (comma-separated) from Yahoo Finance",
     value=default_tickers,
@@ -521,6 +534,33 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
             weights_donut(mv_weights, title="Portfolio Weights (MV)"),
             use_container_width=True
         )
+        st.caption("Slices below 0.01% are grouped into 'Other' to keep labels readable.")
+
+        st.markdown("**Historical performance of this optimized portfolio**")
+        hist_nav = _historical_nav_from_weights(px_df, mv_weights, initial_value=100.0)
+        if not hist_nav.empty:
+            hist_df = _with_date(hist_nav)
+            fig_hist = px.line(hist_df, x="Date", y="nav", template="plotly_dark")
+            fig_hist.update_layout(
+                title=dict(text="Historical NAV (static optimized weights)", font=dict(size=16)),
+                margin=dict(l=10, r=10, t=50, b=10),
+            )
+            fig_hist.update_xaxes(title="")
+            fig_hist.update_yaxes(title="NAV (base 100)")
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+            nav_s = hist_nav["nav"].astype(float)
+            years = max(len(nav_s) / 252.0, 1e-9)
+            total_ret = nav_s.iloc[-1] / nav_s.iloc[0] - 1.0
+            cagr = (nav_s.iloc[-1] / nav_s.iloc[0]) ** (1.0 / years) - 1.0
+            drawdown = nav_s / nav_s.cummax() - 1.0
+            max_dd = float(drawdown.min())
+            hh1, hh2, hh3 = st.columns(3)
+            hh1.metric("Total return", f"{total_ret:.2%}")
+            hh2.metric("CAGR", f"{cagr:.2%}")
+            hh3.metric("Max drawdown", f"{max_dd:.2%}")
+        else:
+            st.info("Not enough data to compute historical portfolio performance.")
 
         st.markdown("**Monte Carlo simulation (future portfolio paths)**")
         mc_col1, mc_col2, mc_col3 = st.columns([1, 1, 1])

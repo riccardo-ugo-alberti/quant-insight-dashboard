@@ -221,8 +221,14 @@ def frontier_chart(frontier_df: pd.DataFrame, title: str = "Efficient Frontier",
 # ---------------------------------------------------------------------
 # 5) Portfolio weights (donut)
 # ---------------------------------------------------------------------
-def weights_donut(weights: pd.Series, title: str = "Portfolio Weights") -> go.Figure:
+def weights_donut(weights: pd.Series, title: str = "Portfolio Weights", min_display_weight: float = 1e-4) -> go.Figure:
     s = weights.copy().sort_values(ascending=False)
+    s = s[s > 0]
+    small = s[s < min_display_weight]
+    shown = s[s >= min_display_weight]
+    if len(small) > 0:
+        shown.loc[f"Other (<{min_display_weight*100:.2f}%)"] = float(small.sum())
+    s = shown.sort_values(ascending=False)
     fig = go.Figure(
         data=[go.Pie(labels=s.index, values=(s.values * 100.0), hole=0.55, textinfo="percent+label")]
     )
@@ -287,10 +293,16 @@ def perf_cum_chart(prices: pd.DataFrame, title: str = "Cumulative Returns (norma
 # ---------------------------------------------------------------------
 # 8) Pie alternativo robusto (accetta Series o DataFrame)
 # ---------------------------------------------------------------------
-def weights_pie(weights, title="Portfolio Weights"):
+def weights_pie(weights, title="Portfolio Weights", min_display_weight: float = 1e-4):
     if isinstance(weights, pd.Series):
-        names = weights.index.astype(str)
-        values = weights.values
+        s = weights.copy().astype(float)
+        s = s[s > 0]
+        small = s[s < min_display_weight]
+        shown = s[s >= min_display_weight]
+        if len(small) > 0:
+            shown.loc[f"Other (<{min_display_weight*100:.2f}%)"] = float(small.sum())
+        names = shown.index.astype(str)
+        values = shown.values
         fig = px.pie(names=names, values=values, hole=0.55, title=title, template=_DEF_TEMPLATE)
     else:
         df = weights.copy()
@@ -305,6 +317,18 @@ def weights_pie(weights, title="Portfolio Weights"):
             num_cols = df.select_dtypes("number").columns.tolist()
             if len(num_cols) == 1:
                 df = df.rename(columns={num_cols[0]: "weight"})
+        df = df.copy()
+        df["weight"] = pd.to_numeric(df["weight"], errors="coerce").fillna(0.0)
+        df = df[df["weight"] > 0]
+        keep = df["weight"] >= min_display_weight
+        if (~keep).any():
+            other = float(df.loc[~keep, "weight"].sum())
+            df = df.loc[keep, ["Ticker", "weight"]]
+            if other > 0:
+                df = pd.concat(
+                    [df, pd.DataFrame([{"Ticker": f"Other (<{min_display_weight*100:.2f}%)", "weight": other}])],
+                    ignore_index=True,
+                )
         fig = px.pie(df, names="Ticker", values="weight", hole=0.55, title=title, template=_DEF_TEMPLATE)
 
     fig.update_traces(textposition="inside", textinfo="percent+label")
