@@ -51,9 +51,6 @@ html, body, [class*="css"] { letter-spacing: 0.05px; }
 .qid-h1 { font-size: 1.55rem; font-weight: 700; margin: .25rem 0 .5rem 0; }
 .qid-sub { color: #b9c1d9; font-size: .95rem; margin-top: -.35rem; }
 [data-testid="stMetricValue"] { font-size: 1.2rem; }
-
-/* OPTIONAL: if any legacy tooltip targets remain, hide them */
-[data-testid="stTooltipHoverTarget"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 st.markdown("""
