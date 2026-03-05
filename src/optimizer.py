@@ -193,9 +193,10 @@ def _mv_optimize(
         w0 = np.ones(n) / n
 
     starts = [w0]
-    if mode == "min_vol":
+    if mode in ("min_vol", "max_sharpe"):
+        # Multi-start improves SLSQP robustness on constrained problems.
         rng = np.random.default_rng(7)
-        for _ in range(6):
+        for _ in range(8):
             v = rng.random(n)
             starts.append(v / v.sum())
 
@@ -215,6 +216,37 @@ def _mv_optimize(
             continue
         if best_res is None or cand.fun < best_res.fun:
             best_res = cand
+
+    if best_res is None and mode == "max_sharpe":
+        # Fallback: solve a grid of feasible target-return min-vol problems
+        # and pick the portfolio with the highest Sharpe.
+        target_grid = np.linspace(min_feasible_ret, max_feasible_ret, 31)
+        best_w = None
+        best_stats = None
+        best_sr = -np.inf
+        for tr in target_grid:
+            try:
+                w_tr, stats_tr = _mv_optimize(
+                    mu=mu,
+                    cov=cov,
+                    rf=rf,
+                    mode="target_return",
+                    target_return=float(tr),
+                    shorting=shorting,
+                    max_weight=max_weight,
+                    w0=w0,
+                    mu_vals=mu_vals,
+                    cov_vals=cov_vals,
+                )
+            except Exception:
+                continue
+            if np.isfinite(stats_tr[2]) and stats_tr[2] > best_sr:
+                best_sr = stats_tr[2]
+                best_w = w_tr
+                best_stats = stats_tr
+
+        if best_w is not None and best_stats is not None:
+            return best_w, best_stats
 
     if best_res is None:
         fail_msg = (
