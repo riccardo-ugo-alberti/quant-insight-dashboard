@@ -1,6 +1,7 @@
 # Quant Insight Dashboard
 
-[![Deploy on Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://quant-insight-dashboard-ing3uxvvrggk7hntnbcg5r.streamlit.app/)
+[![Open App](https://img.shields.io/badge/Open%20App-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://quant-insight-dashboard-ing3uxvvrggk7hntnbcg5r.streamlit.app/)
 
 Interactive Streamlit app to analyze **performance, volatility, correlation, portfolio optimization, and beta** for any set of tickers (stocks/ETFs).
 
@@ -44,7 +45,7 @@ Deploy/redeploy from Streamlit Cloud using:
 2. Branch: `main`
 3. Main file path: `streamlit_app.py`
 
-After deploy, update this README with your new live `https://<app>.streamlit.app` URL.
+Live app: `https://quant-insight-dashboard-ing3uxvvrggk7hntnbcg5r.streamlit.app/`
 
 ---
 
