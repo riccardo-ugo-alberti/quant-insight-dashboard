@@ -533,6 +533,73 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     kk3.metric(f"Projection ({years}y)", f"${projected_value:,.0f}")
     kk4.metric("Goal coverage", f"{goal_coverage:.1%}")
 
+    st.markdown("#### Stress Test Scenarios")
+    ss1, ss2, ss3 = st.columns(3)
+    with ss1:
+        bear_return = st.slider("Bear return (annual %)", min_value=-25.0, max_value=10.0, value=float(np.clip((est_return - 0.06) * 100.0, -25.0, 10.0)), step=0.5) / 100.0
+    with ss2:
+        base_return = st.slider("Base return (annual %)", min_value=-5.0, max_value=20.0, value=float(np.clip(est_return * 100.0, -5.0, 20.0)), step=0.5) / 100.0
+    with ss3:
+        bull_return = st.slider("Bull return (annual %)", min_value=0.0, max_value=30.0, value=float(np.clip((est_return + 0.05) * 100.0, 0.0, 30.0)), step=0.5) / 100.0
+
+    def _scenario_path(annual_return: float, n_years: int, start_value: float, monthly_add: float) -> tuple[list[dict], float]:
+        value = float(start_value)
+        path = [{"Year": 0, "Value": value}]
+        monthly_r = (1.0 + annual_return) ** (1.0 / 12.0) - 1.0
+        for month_idx in range(1, n_years * 12 + 1):
+            value = value * (1.0 + monthly_r) + monthly_add
+            if month_idx % 12 == 0:
+                path.append({"Year": month_idx // 12, "Value": value})
+        return path, value
+
+    bear_path, bear_final = _scenario_path(bear_return, years, initial_capital, monthly_contribution)
+    base_path, base_final = _scenario_path(base_return, years, initial_capital, monthly_contribution)
+    bull_path, bull_final = _scenario_path(bull_return, years, initial_capital, monthly_contribution)
+
+    scenario_curve = pd.concat(
+        [
+            pd.DataFrame(bear_path).assign(Scenario="Bear"),
+            pd.DataFrame(base_path).assign(Scenario="Base"),
+            pd.DataFrame(bull_path).assign(Scenario="Bull"),
+        ],
+        ignore_index=True,
+    )
+    scenario_fig = px.line(
+        scenario_curve,
+        x="Year",
+        y="Value",
+        color="Scenario",
+        markers=True,
+        template="plotly_dark",
+        color_discrete_map={"Bear": "#ff6b6b", "Base": "#4dabf7", "Bull": "#51cf66"},
+    )
+    scenario_fig.update_layout(margin=dict(l=10, r=10, t=35, b=10), title="Projected portfolio paths by scenario")
+    st.plotly_chart(scenario_fig, use_container_width=True)
+
+    scenario_outcomes = pd.DataFrame(
+        [
+            {
+                "Scenario": "Bear",
+                "Assumed return": f"{bear_return:.1%}",
+                "Projected value": f"${bear_final:,.0f}",
+                "Goal coverage": f"{(bear_final / max(float(target_goal), 1.0)):.1%}",
+            },
+            {
+                "Scenario": "Base",
+                "Assumed return": f"{base_return:.1%}",
+                "Projected value": f"${base_final:,.0f}",
+                "Goal coverage": f"{(base_final / max(float(target_goal), 1.0)):.1%}",
+            },
+            {
+                "Scenario": "Bull",
+                "Assumed return": f"{bull_return:.1%}",
+                "Projected value": f"${bull_final:,.0f}",
+                "Goal coverage": f"{(bull_final / max(float(target_goal), 1.0)):.1%}",
+            },
+        ]
+    )
+    st.dataframe(scenario_outcomes, use_container_width=True, hide_index=True)
+
     starter_universe = list(model["example_tickers"])
     if "Technology tilt (+5%)" in tilts:
         starter_universe.extend(["SMH", "XLK"])
