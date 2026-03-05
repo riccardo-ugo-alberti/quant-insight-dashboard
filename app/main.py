@@ -58,57 +58,13 @@ html, body, [class*="css"] { letter-spacing: 0.05px; }
 """, unsafe_allow_html=True)
 st.markdown("""
 <style>
-/* Inputs: neutral dark, keep original app look */
+/* Safe styling only on closed controls */
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {
   background: #141821 !important;
   border-color: #2a2f3a !important;
 }
 div[data-baseweb="select"] svg { fill: #e6edf3 !important; }
-
-/* Dropdown text visibility: global hard override */
-div[data-baseweb="popover"],
-div[data-baseweb="popover"] *,
-div[data-baseweb="menu"],
-div[data-baseweb="menu"] *,
-div[data-baseweb="layer"] [role="listbox"],
-div[data-baseweb="layer"] [role="listbox"] * {
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-}
-
-/* Panels and options */
-div[data-baseweb="popover"] [role="listbox"],
-div[data-baseweb="menu"],
-div[data-baseweb="layer"] [role="listbox"],
-ul[data-testid="stSelectboxVirtualDropdown"],
-div[data-testid="stMultiSelectPopover"] [role="listbox"] {
-  background-color: #0e1117 !important;
-  border: 1px solid #2a2f3a !important;
-}
-div[data-baseweb="popover"] [role="option"],
-div[data-baseweb="menu"] [role="option"],
-div[data-baseweb="layer"] [role="option"],
-ul[data-testid="stSelectboxVirtualDropdown"] li,
-div[data-testid="stMultiSelectPopover"] [role="option"],
-div[data-testid="stMultiSelectPopover"] li {
-  background-color: #0e1117 !important;
-}
-div[data-baseweb="popover"] [role="option"]:hover,
-div[data-baseweb="menu"] [role="option"]:hover,
-div[data-baseweb="layer"] [role="option"]:hover,
-ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
-div[data-testid="stMultiSelectPopover"] [role="option"]:hover,
-div[data-testid="stMultiSelectPopover"] li:hover {
-  background-color: #1a1f2b !important;
-}
-div[data-baseweb="popover"] [role="option"][aria-selected="true"],
-div[data-baseweb="menu"] [role="option"][aria-selected="true"],
-div[data-baseweb="layer"] [role="option"][aria-selected="true"],
-ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"],
-div[data-testid="stMultiSelectPopover"] [role="option"][aria-selected="true"] {
-  background-color: #202635 !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
