@@ -117,6 +117,30 @@ div[data-baseweb="layer"] li[aria-selected="true"] {
   color: #ffffff !important;
   -webkit-text-fill-color: #ffffff !important;
 }
+
+/* Streamlit virtualized dropdown containers (global fallback) */
+ul[data-testid="stSelectboxVirtualDropdown"],
+div[data-testid="stMultiSelectPopover"] ul,
+div[data-testid="stMultiSelectPopover"] [role="listbox"] {
+  background: #0e1117 !important;
+  border: 1px solid #2a2f3a !important;
+}
+ul[data-testid="stSelectboxVirtualDropdown"] li,
+ul[data-testid="stSelectboxVirtualDropdown"] li *,
+div[data-testid="stMultiSelectPopover"] li,
+div[data-testid="stMultiSelectPopover"] li *,
+div[data-testid="stMultiSelectPopover"] [role="option"],
+div[data-testid="stMultiSelectPopover"] [role="option"] * {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  background: #0e1117 !important;
+  opacity: 1 !important;
+}
+ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
+div[data-testid="stMultiSelectPopover"] li:hover,
+div[data-testid="stMultiSelectPopover"] [role="option"]:hover {
+  background: #1a1f2b !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
