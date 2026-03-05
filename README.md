@@ -1,7 +1,6 @@
 # Quant Insight Dashboard
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://quant-insight-dashboard-cq4skayqidv5vnmysogrcz.streamlit.app)
-[![Open App](https://img.shields.io/badge/Open%20App-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://quant-insight-dashboard-cq4skayqidv5vnmysogrcz.streamlit.app)
+[![Deploy on Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/)
 
 Interactive Streamlit app to analyze **performance, volatility, correlation, portfolio optimization, and beta** for any set of tickers (stocks/ETFs).
 
@@ -33,6 +32,19 @@ uv venv --python 3.12 .venv
 pip install -r requirements.txt
 streamlit run app/main.py
 ```
+
+---
+
+## Streamlit Cloud Deploy
+
+The previous public app URL is no longer active (returns 404).  
+Deploy/redeploy from Streamlit Cloud using:
+
+1. Repository: `riccardo-ugo-alberti/quant-insight-dashboard`
+2. Branch: `main`
+3. Main file path: `streamlit_app.py`
+
+After deploy, update this README with your new live `https://<app>.streamlit.app` URL.
 
 ---
 
