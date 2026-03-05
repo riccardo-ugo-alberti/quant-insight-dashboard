@@ -58,29 +58,33 @@ html, body, [class*="css"] { letter-spacing: 0.05px; }
 """, unsafe_allow_html=True)
 st.markdown("""
 <style>
-/* Pannello e testo del dropdown */
-div[data-baseweb="select"] div[role="listbox"] {
-  background-color: #0f1117 !important;
-  color: #e6edf3 !important;
-  border: 1px solid #2a2f3a !important;
+/* Input chrome */
+div[data-baseweb="select"] > div {
+  background: linear-gradient(180deg, #151a2b 0%, #101524 100%) !important;
 }
-
-/* Forza il colore su tutte le label delle opzioni */
-div[data-baseweb="select"] div[role="option"],
-div[data-baseweb="select"] div[role="option"] * {
-  color: #e6edf3 !important;
-}
-
-/* Hover e selected */
-div[data-baseweb="select"] div[role="option"]:hover {
-  background-color: #1f232b !important;
-}
-div[data-baseweb="select"] div[role="option"][aria-selected="true"] {
-  background-color: #243040 !important;
-}
-
-/* caret */
 div[data-baseweb="select"] svg { fill: #e6edf3 !important; }
+
+/* Dropdown panel rendered in a portal (fixes black/unreadable curtain menu) */
+div[data-baseweb="popover"] [role="listbox"] {
+  background-color: #0f1524 !important;
+  border: 1px solid #2a3554 !important;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45) !important;
+}
+div[data-baseweb="popover"] [role="option"],
+div[data-baseweb="popover"] [role="option"] *,
+div[data-baseweb="popover"] li,
+div[data-baseweb="popover"] li * {
+  color: #eef3ff !important;
+  background-color: transparent !important;
+}
+div[data-baseweb="popover"] [role="option"]:hover,
+div[data-baseweb="popover"] li:hover {
+  background-color: #1f2a44 !important;
+}
+div[data-baseweb="popover"] [role="option"][aria-selected="true"],
+div[data-baseweb="popover"] li[aria-selected="true"] {
+  background-color: #24375f !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -390,77 +394,211 @@ with tab_guide:
     section_header(
         "Build Your First Portfolio (Beginner Guide)",
         """
-A practical roadmap for users without a finance background.
-Start from goals, choose a simple structure, and then validate with the other tabs.
+A practical workflow for users without a finance background.
+Set your plan, tune constraints, then apply a curated starter universe in one click.
 """,
     )
 
-    st.markdown("### Portfolio Builder Wizard")
-    w1, w2, w3 = st.columns(3)
+    st.markdown("### Portfolio Builder Wizard 2.0")
+    w1, w2, w3, w4 = st.columns(4)
     with w1:
         horizon_years = st.selectbox("Investment horizon", ["0-3 years", "3-7 years", "7+ years"], index=2)
     with w2:
         risk_profile = st.selectbox("Risk profile", ["Conservative", "Balanced", "Growth"], index=1)
     with w3:
         objective = st.selectbox("Main objective", ["Capital preservation", "Steady growth", "Max growth"], index=1)
+    with w4:
+        concentration_style = st.selectbox(
+            "Portfolio style",
+            ["Diversified (8-12 positions)", "Focused (5-8 positions)", "Core-only (3-5 positions)"],
+            index=0,
+        )
+
+    c_plan_1, c_plan_2, c_plan_3, c_plan_4 = st.columns(4)
+    with c_plan_1:
+        initial_capital = st.number_input("Initial capital ($)", min_value=0, value=20000, step=1000)
+    with c_plan_2:
+        monthly_contribution = st.number_input("Monthly contribution ($)", min_value=0, value=600, step=50)
+    with c_plan_3:
+        target_goal = st.number_input("Target value ($)", min_value=1000, value=150000, step=5000)
+    with c_plan_4:
+        min_bond_floor = st.slider("Min bond floor (%)", min_value=5, max_value=60, value=20, step=5)
+
+    try:
+        tilts = st.multiselect(
+            "Optional tilts (max 2)",
+            options=["Technology tilt (+5%)", "Income tilt (+5%)", "Inflation hedge (+5%)"],
+            max_selections=2,
+        )
+    except TypeError:
+        tilts = st.multiselect(
+            "Optional tilts (max 2)",
+            options=["Technology tilt (+5%)", "Income tilt (+5%)", "Inflation hedge (+5%)"],
+        )[:2]
 
     starter_models = {
         "Conservative": {
-            "allocation": {"Global Equity": 40, "Bonds": 50, "Gold": 10},
+            "allocation": {"Global Equity": 40, "Bonds": 50, "Gold": 10, "Thematic": 0, "Dividend": 0},
             "example_tickers": ["VT", "BND", "GLD", "IEF"],
             "rebalance": "Every 6 months",
             "max_single": 20,
+            "ret": 0.055,
+            "vol": 0.10,
         },
         "Balanced": {
-            "allocation": {"Global Equity": 60, "Bonds": 30, "Gold": 10},
+            "allocation": {"Global Equity": 60, "Bonds": 30, "Gold": 10, "Thematic": 0, "Dividend": 0},
             "example_tickers": ["VT", "QQQ", "BND", "GLD", "SPY"],
             "rebalance": "Every 3 months",
             "max_single": 25,
+            "ret": 0.075,
+            "vol": 0.14,
         },
         "Growth": {
-            "allocation": {"Global Equity": 80, "Bonds": 15, "Thematic": 5},
+            "allocation": {"Global Equity": 78, "Bonds": 12, "Gold": 5, "Thematic": 5, "Dividend": 0},
             "example_tickers": ["VT", "QQQ", "SPY", "BND", "SMH"],
             "rebalance": "Every 3 months",
             "max_single": 30,
+            "ret": 0.092,
+            "vol": 0.19,
         },
     }
 
     model = starter_models[risk_profile]
+    allocation = {k: float(v) for k, v in model["allocation"].items()}
+
+    horizon_adjust = {"0-3 years": -10, "3-7 years": 0, "7+ years": 5}[horizon_years]
+    objective_adjust = {"Capital preservation": -5, "Steady growth": 0, "Max growth": 7}[objective]
+    equity_shift = horizon_adjust + objective_adjust
+    allocation["Global Equity"] += equity_shift
+    allocation["Bonds"] -= equity_shift
+
+    if "Technology tilt (+5%)" in tilts:
+        allocation["Thematic"] += 5
+        allocation["Global Equity"] -= 3
+        allocation["Bonds"] -= 2
+    if "Income tilt (+5%)" in tilts:
+        allocation["Dividend"] += 5
+        allocation["Global Equity"] -= 5
+    if "Inflation hedge (+5%)" in tilts:
+        allocation["Gold"] += 5
+        allocation["Bonds"] -= 5
+
+    for bucket in ["Global Equity", "Gold", "Thematic", "Dividend"]:
+        allocation[bucket] = max(allocation[bucket], 0.0)
+
+    if allocation["Bonds"] < float(min_bond_floor):
+        need = float(min_bond_floor) - allocation["Bonds"]
+        allocation["Bonds"] += need
+        for bucket in ["Global Equity", "Gold", "Thematic", "Dividend"]:
+            take = min(allocation[bucket], need)
+            allocation[bucket] -= take
+            need -= take
+            if need <= 0:
+                break
+
+    total_alloc = max(sum(allocation.values()), 1e-9)
+    allocation = {k: round(100.0 * v / total_alloc, 1) for k, v in allocation.items()}
+    alloc_gap = round(100.0 - sum(allocation.values()), 1)
+    allocation["Bonds"] = round(allocation["Bonds"] + alloc_gap, 1)
+
+    concentration_map = {
+        "Diversified (8-12 positions)": (10, -4),
+        "Focused (5-8 positions)": (7, 0),
+        "Core-only (3-5 positions)": (5, 4),
+    }
+    n_positions, max_single_shift = concentration_map[concentration_style]
+    max_single = max(10, min(40, model["max_single"] + max_single_shift))
+
+    return_adj = {"Capital preservation": -0.01, "Steady growth": 0.0, "Max growth": 0.012}[objective]
+    est_return = max(0.02, model["ret"] + return_adj)
+    est_vol = model["vol"] + {"Diversified (8-12 positions)": -0.01, "Focused (5-8 positions)": 0.0, "Core-only (3-5 positions)": 0.012}[concentration_style]
+
+    years = {"0-3 years": 3, "3-7 years": 6, "7+ years": 10}[horizon_years]
+    months = years * 12
+    monthly_rate = (1.0 + est_return) ** (1.0 / 12.0) - 1.0
+    if monthly_rate > 0:
+        projected_value = initial_capital * (1.0 + monthly_rate) ** months + monthly_contribution * (((1.0 + monthly_rate) ** months - 1.0) / monthly_rate)
+    else:
+        projected_value = initial_capital + (monthly_contribution * months)
+    goal_coverage = projected_value / max(float(target_goal), 1.0)
+
     st.success(
         f"Suggested setup for **{risk_profile}** profile ({objective.lower()}, {horizon_years}): "
-        f"rebalance {model['rebalance'].lower()}, keep max single position around {model['max_single']}%."
+        f"rebalance {model['rebalance'].lower()}, target {n_positions} positions, keep max single position around {max_single}%."
     )
+
+    kk1, kk2, kk3, kk4 = st.columns(4)
+    kk1.metric("Est. annual return", f"{est_return:.1%}")
+    kk2.metric("Est. annual volatility", f"{est_vol:.1%}")
+    kk3.metric(f"Projection ({years}y)", f"${projected_value:,.0f}")
+    kk4.metric("Goal coverage", f"{goal_coverage:.1%}")
+
+    starter_universe = list(model["example_tickers"])
+    if "Technology tilt (+5%)" in tilts:
+        starter_universe.extend(["SMH", "XLK"])
+    if "Income tilt (+5%)" in tilts:
+        starter_universe.extend(["SCHD", "VIG"])
+    if "Inflation hedge (+5%)" in tilts:
+        starter_universe.extend(["IAU", "DBC"])
+    if risk_profile != "Conservative":
+        starter_universe.extend(["VEA", "VWO"])
+
+    dedup_universe = []
+    for ticker in starter_universe:
+        if ticker not in dedup_universe:
+            dedup_universe.append(ticker)
+    starter_universe = dedup_universe[:n_positions]
 
     mcol1, mcol2 = st.columns([0.62, 0.38])
     with mcol1:
         alloc_df = pd.DataFrame(
-            [{"Bucket": k, "Weight %": v} for k, v in model["allocation"].items()]
+            [{"Bucket": k, "Weight %": v} for k, v in allocation.items() if v > 0]
         )
         st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+        st.caption("Allocation is dynamically adjusted by horizon, objective, tilts, and bond floor.")
     with mcol2:
-        st.info("**Starter universe**\n\n" + ", ".join(model["example_tickers"]))
+        st.info("**Starter universe**\n\n" + ", ".join(starter_universe))
         if st.button("Use this starter universe in sidebar", key="apply_starter_universe", use_container_width=True):
-            st.session_state["tickers_str"] = ", ".join(model["example_tickers"])
+            st.session_state["tickers_str"] = ", ".join(starter_universe)
             st.rerun()
+
+    progress_df = pd.DataFrame(
+        {
+            "Step": ["Capital plan", "Allocation design", "Risk constraints", "Backtest readiness"],
+            "Status": [
+                "Done" if (initial_capital > 0 and monthly_contribution >= 0) else "Pending",
+                "Done",
+                "Done" if max_single <= 35 else "Review",
+                "Ready",
+            ],
+            "Action": [
+                f"Target ${target_goal:,.0f} in about {years} years",
+                f"{risk_profile} base with {len(tilts)} optional tilts",
+                f"Max single {max_single}%, min bonds {min_bond_floor}%",
+                "Open Optimizer and Dynamic Backtest tabs",
+            ],
+        }
+    )
+    st.dataframe(progress_df, use_container_width=True, hide_index=True)
 
     st.divider()
     st.markdown(
         """
 ### Step-by-step roadmap
 1. **Set your constraints first**
-   - Define horizon, monthly contribution, and emergency-cash buffer.
-   - Choose max tolerable drawdown (example: -15%, -25%).
+   - Define horizon, contributions, and goal value.
+   - Choose max tolerable drawdown and concentration style.
 2. **Build the core**
-   - Start with broad ETFs before adding single stocks.
-   - Keep 3-6 holdings initially to stay understandable.
+   - Start with broad ETFs before adding thematic sleeves.
+   - Keep rules explicit: max single weight and bond floor.
 3. **Control overlap**
    - Use the **Correlation** tab to remove highly redundant holdings.
 4. **Stress test your idea**
    - Use **Optimizer** for weight sanity checks and caps.
    - Use **Dynamic Backtest** to test rebalancing + costs.
 5. **Automate discipline**
-   - Rebalance on a fixed schedule (not based on emotions).
-   - Review quarterly; avoid frequent portfolio changes.
+   - Rebalance on a fixed schedule, not based on emotions.
+   - Review quarterly and only change rules when assumptions change.
 """
     )
 
@@ -470,6 +608,7 @@ Start from goals, choose a simple structure, and then validate with the other ta
 - [ ] I know my time horizon and can leave this capital invested.
 - [ ] I chose a risk profile that matches my tolerance for losses.
 - [ ] No single position is above my max weight rule.
+- [ ] I set a bond floor and concentration style.
 - [ ] I defined a rebalancing rule (calendar or threshold based).
 - [ ] I understand fees, taxes, and expected volatility.
 """
