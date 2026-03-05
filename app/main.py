@@ -58,88 +58,56 @@ html, body, [class*="css"] { letter-spacing: 0.05px; }
 """, unsafe_allow_html=True)
 st.markdown("""
 <style>
-/* Input chrome: back to neutral dark/black */
-div[data-baseweb="select"] > div {
-  background: #141821 !important;
-  border-color: #2a2f3a !important;
-}
+/* Inputs: neutral dark, keep original app look */
+div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {
   background: #141821 !important;
   border-color: #2a2f3a !important;
 }
 div[data-baseweb="select"] svg { fill: #e6edf3 !important; }
 
-/* Dropdown panel rendered in a portal/layer */
-div[data-baseweb="popover"] [role="listbox"],
+/* Dropdown text visibility: global hard override */
+div[data-baseweb="popover"],
+div[data-baseweb="popover"] *,
 div[data-baseweb="menu"],
-div[data-baseweb="layer"] [role="listbox"] {
-  background-color: #0e1117 !important;
-  border: 1px solid #2a2f3a !important;
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45) !important;
-}
-div[data-baseweb="popover"] [role="listbox"] * ,
-div[data-baseweb="menu"] * ,
+div[data-baseweb="menu"] *,
+div[data-baseweb="layer"] [role="listbox"],
 div[data-baseweb="layer"] [role="listbox"] * {
-  color: #f8fafc !important;
-  -webkit-text-fill-color: #f8fafc !important;
-}
-div[data-baseweb="popover"] [role="option"],
-div[data-baseweb="popover"] [role="option"] *,
-div[data-baseweb="popover"] li,
-div[data-baseweb="popover"] li *,
-div[data-baseweb="menu"] [role="option"],
-div[data-baseweb="menu"] [role="option"] *,
-div[data-baseweb="layer"] [role="option"],
-div[data-baseweb="layer"] [role="option"] *,
-div[data-baseweb="layer"] li,
-div[data-baseweb="layer"] li * {
-  color: #f8fafc !important;
-  -webkit-text-fill-color: #f8fafc !important;
-  background-color: #0e1117 !important;
-  opacity: 1 !important;
-  text-shadow: none !important;
-}
-div[data-baseweb="popover"] [role="option"]:hover,
-div[data-baseweb="popover"] li:hover,
-div[data-baseweb="menu"] [role="option"]:hover,
-div[data-baseweb="layer"] [role="option"]:hover,
-div[data-baseweb="layer"] li:hover {
-  background-color: #1a1f2b !important;
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-}
-div[data-baseweb="popover"] [role="option"][aria-selected="true"],
-div[data-baseweb="popover"] li[aria-selected="true"],
-div[data-baseweb="menu"] [role="option"][aria-selected="true"],
-div[data-baseweb="layer"] [role="option"][aria-selected="true"],
-div[data-baseweb="layer"] li[aria-selected="true"] {
-  background-color: #202635 !important;
   color: #ffffff !important;
   -webkit-text-fill-color: #ffffff !important;
 }
 
-/* Streamlit virtualized dropdown containers (global fallback) */
+/* Panels and options */
+div[data-baseweb="popover"] [role="listbox"],
+div[data-baseweb="menu"],
+div[data-baseweb="layer"] [role="listbox"],
 ul[data-testid="stSelectboxVirtualDropdown"],
-div[data-testid="stMultiSelectPopover"] ul,
 div[data-testid="stMultiSelectPopover"] [role="listbox"] {
-  background: #0e1117 !important;
+  background-color: #0e1117 !important;
   border: 1px solid #2a2f3a !important;
 }
+div[data-baseweb="popover"] [role="option"],
+div[data-baseweb="menu"] [role="option"],
+div[data-baseweb="layer"] [role="option"],
 ul[data-testid="stSelectboxVirtualDropdown"] li,
-ul[data-testid="stSelectboxVirtualDropdown"] li *,
-div[data-testid="stMultiSelectPopover"] li,
-div[data-testid="stMultiSelectPopover"] li *,
 div[data-testid="stMultiSelectPopover"] [role="option"],
-div[data-testid="stMultiSelectPopover"] [role="option"] * {
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-  background: #0e1117 !important;
-  opacity: 1 !important;
+div[data-testid="stMultiSelectPopover"] li {
+  background-color: #0e1117 !important;
 }
+div[data-baseweb="popover"] [role="option"]:hover,
+div[data-baseweb="menu"] [role="option"]:hover,
+div[data-baseweb="layer"] [role="option"]:hover,
 ul[data-testid="stSelectboxVirtualDropdown"] li:hover,
-div[data-testid="stMultiSelectPopover"] li:hover,
-div[data-testid="stMultiSelectPopover"] [role="option"]:hover {
-  background: #1a1f2b !important;
+div[data-testid="stMultiSelectPopover"] [role="option"]:hover,
+div[data-testid="stMultiSelectPopover"] li:hover {
+  background-color: #1a1f2b !important;
+}
+div[data-baseweb="popover"] [role="option"][aria-selected="true"],
+div[data-baseweb="menu"] [role="option"][aria-selected="true"],
+div[data-baseweb="layer"] [role="option"][aria-selected="true"],
+ul[data-testid="stSelectboxVirtualDropdown"] li[aria-selected="true"],
+div[data-testid="stMultiSelectPopover"] [role="option"][aria-selected="true"] {
+  background-color: #202635 !important;
 }
 </style>
 """, unsafe_allow_html=True)
