@@ -370,9 +370,114 @@ kpi_c.metric("Missing data", f"{missing_pct:.2%}")
 # --------------------------------------------------------------------------
 # Tabs
 # --------------------------------------------------------------------------
-tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_backtest, tab_export = st.tabs(
-    ["Prices", "Performance", "Volatility", "Correlation", "Optimizer", "Dynamic Backtest", "Data / Export"]
+tab_guide, tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_backtest, tab_export = st.tabs(
+    [
+        "Build Your First Portfolio",
+        "Prices",
+        "Performance",
+        "Volatility",
+        "Correlation",
+        "Optimizer",
+        "Dynamic Backtest",
+        "Data / Export",
+    ]
 )
+
+# --------------------------------------------------------------------------
+# Build your first portfolio
+# --------------------------------------------------------------------------
+with tab_guide:
+    section_header(
+        "Build Your First Portfolio (Beginner Guide)",
+        """
+A practical roadmap for users without a finance background.
+Start from goals, choose a simple structure, and then validate with the other tabs.
+""",
+    )
+
+    st.markdown("### Portfolio Builder Wizard")
+    w1, w2, w3 = st.columns(3)
+    with w1:
+        horizon_years = st.selectbox("Investment horizon", ["0-3 years", "3-7 years", "7+ years"], index=2)
+    with w2:
+        risk_profile = st.selectbox("Risk profile", ["Conservative", "Balanced", "Growth"], index=1)
+    with w3:
+        objective = st.selectbox("Main objective", ["Capital preservation", "Steady growth", "Max growth"], index=1)
+
+    starter_models = {
+        "Conservative": {
+            "allocation": {"Global Equity": 40, "Bonds": 50, "Gold": 10},
+            "example_tickers": ["VT", "BND", "GLD", "IEF"],
+            "rebalance": "Every 6 months",
+            "max_single": 20,
+        },
+        "Balanced": {
+            "allocation": {"Global Equity": 60, "Bonds": 30, "Gold": 10},
+            "example_tickers": ["VT", "QQQ", "BND", "GLD", "SPY"],
+            "rebalance": "Every 3 months",
+            "max_single": 25,
+        },
+        "Growth": {
+            "allocation": {"Global Equity": 80, "Bonds": 15, "Thematic": 5},
+            "example_tickers": ["VT", "QQQ", "SPY", "BND", "SMH"],
+            "rebalance": "Every 3 months",
+            "max_single": 30,
+        },
+    }
+
+    model = starter_models[risk_profile]
+    st.success(
+        f"Suggested setup for **{risk_profile}** profile ({objective.lower()}, {horizon_years}): "
+        f"rebalance {model['rebalance'].lower()}, keep max single position around {model['max_single']}%."
+    )
+
+    mcol1, mcol2 = st.columns([0.62, 0.38])
+    with mcol1:
+        alloc_df = pd.DataFrame(
+            [{"Bucket": k, "Weight %": v} for k, v in model["allocation"].items()]
+        )
+        st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+    with mcol2:
+        st.info("**Starter universe**\n\n" + ", ".join(model["example_tickers"]))
+        if st.button("Use this starter universe in sidebar", key="apply_starter_universe", use_container_width=True):
+            st.session_state["tickers_str"] = ", ".join(model["example_tickers"])
+            st.rerun()
+
+    st.divider()
+    st.markdown(
+        """
+### Step-by-step roadmap
+1. **Set your constraints first**
+   - Define horizon, monthly contribution, and emergency-cash buffer.
+   - Choose max tolerable drawdown (example: -15%, -25%).
+2. **Build the core**
+   - Start with broad ETFs before adding single stocks.
+   - Keep 3-6 holdings initially to stay understandable.
+3. **Control overlap**
+   - Use the **Correlation** tab to remove highly redundant holdings.
+4. **Stress test your idea**
+   - Use **Optimizer** for weight sanity checks and caps.
+   - Use **Dynamic Backtest** to test rebalancing + costs.
+5. **Automate discipline**
+   - Rebalance on a fixed schedule (not based on emotions).
+   - Review quarterly; avoid frequent portfolio changes.
+"""
+    )
+
+    with st.expander("Beginner checklist before investing"):
+        st.markdown(
+            """
+- [ ] I know my time horizon and can leave this capital invested.
+- [ ] I chose a risk profile that matches my tolerance for losses.
+- [ ] No single position is above my max weight rule.
+- [ ] I defined a rebalancing rule (calendar or threshold based).
+- [ ] I understand fees, taxes, and expected volatility.
+"""
+        )
+
+    st.caption(
+        "Educational use only: this dashboard provides learning support, not personalized investment advice."
+    )
 
 # --------------------------------------------------------------------------
 # Prices
