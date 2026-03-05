@@ -58,32 +58,52 @@ html, body, [class*="css"] { letter-spacing: 0.05px; }
 """, unsafe_allow_html=True)
 st.markdown("""
 <style>
-/* Input chrome */
+/* Input chrome: back to neutral dark/black */
 div[data-baseweb="select"] > div {
-  background: linear-gradient(180deg, #151a2b 0%, #101524 100%) !important;
+  background: #141821 !important;
+  border-color: #2a2f3a !important;
+}
+div[data-baseweb="input"] > div {
+  background: #141821 !important;
+  border-color: #2a2f3a !important;
 }
 div[data-baseweb="select"] svg { fill: #e6edf3 !important; }
 
-/* Dropdown panel rendered in a portal (fixes black/unreadable curtain menu) */
-div[data-baseweb="popover"] [role="listbox"] {
-  background-color: #0f1524 !important;
-  border: 1px solid #2a3554 !important;
+/* Dropdown panel rendered in a portal/layer */
+div[data-baseweb="popover"] [role="listbox"],
+div[data-baseweb="menu"],
+div[data-baseweb="layer"] [role="listbox"] {
+  background-color: #0e1117 !important;
+  border: 1px solid #2a2f3a !important;
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45) !important;
 }
 div[data-baseweb="popover"] [role="option"],
 div[data-baseweb="popover"] [role="option"] *,
 div[data-baseweb="popover"] li,
-div[data-baseweb="popover"] li * {
-  color: #eef3ff !important;
+div[data-baseweb="popover"] li *,
+div[data-baseweb="menu"] [role="option"],
+div[data-baseweb="menu"] [role="option"] *,
+div[data-baseweb="layer"] [role="option"],
+div[data-baseweb="layer"] [role="option"] *,
+div[data-baseweb="layer"] li,
+div[data-baseweb="layer"] li * {
+  color: #f8fafc !important;
   background-color: transparent !important;
+  opacity: 1 !important;
 }
 div[data-baseweb="popover"] [role="option"]:hover,
-div[data-baseweb="popover"] li:hover {
-  background-color: #1f2a44 !important;
+div[data-baseweb="popover"] li:hover,
+div[data-baseweb="menu"] [role="option"]:hover,
+div[data-baseweb="layer"] [role="option"]:hover,
+div[data-baseweb="layer"] li:hover {
+  background-color: #1a1f2b !important;
 }
 div[data-baseweb="popover"] [role="option"][aria-selected="true"],
-div[data-baseweb="popover"] li[aria-selected="true"] {
-  background-color: #24375f !important;
+div[data-baseweb="popover"] li[aria-selected="true"],
+div[data-baseweb="menu"] [role="option"][aria-selected="true"],
+div[data-baseweb="layer"] [role="option"][aria-selected="true"],
+div[data-baseweb="layer"] li[aria-selected="true"] {
+  background-color: #202635 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -400,39 +420,40 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     )
 
     st.markdown("### Portfolio Builder Wizard 2.0")
-    w1, w2, w3, w4 = st.columns(4)
+    st.caption("Structured setup: define profile, define capital plan, then add optional tilts.")
+
+    st.markdown("#### 1) Investor Profile")
+    w1, w2 = st.columns(2)
     with w1:
         horizon_years = st.selectbox("Investment horizon", ["0-3 years", "3-7 years", "7+ years"], index=2)
-    with w2:
         risk_profile = st.selectbox("Risk profile", ["Conservative", "Balanced", "Growth"], index=1)
-    with w3:
+    with w2:
         objective = st.selectbox("Main objective", ["Capital preservation", "Steady growth", "Max growth"], index=1)
-    with w4:
         concentration_style = st.selectbox(
             "Portfolio style",
             ["Diversified (8-12 positions)", "Focused (5-8 positions)", "Core-only (3-5 positions)"],
             index=0,
         )
 
-    c_plan_1, c_plan_2, c_plan_3, c_plan_4 = st.columns(4)
+    st.markdown("#### 2) Capital Plan")
+    c_plan_1, c_plan_2 = st.columns(2)
     with c_plan_1:
         initial_capital = st.number_input("Initial capital ($)", min_value=0, value=20000, step=1000)
-    with c_plan_2:
         monthly_contribution = st.number_input("Monthly contribution ($)", min_value=0, value=600, step=50)
-    with c_plan_3:
+    with c_plan_2:
         target_goal = st.number_input("Target value ($)", min_value=1000, value=150000, step=5000)
-    with c_plan_4:
         min_bond_floor = st.slider("Min bond floor (%)", min_value=5, max_value=60, value=20, step=5)
 
+    st.markdown("#### 3) Optional Tilts")
     try:
         tilts = st.multiselect(
-            "Optional tilts (max 2)",
+            "Select up to two",
             options=["Technology tilt (+5%)", "Income tilt (+5%)", "Inflation hedge (+5%)"],
             max_selections=2,
         )
     except TypeError:
         tilts = st.multiselect(
-            "Optional tilts (max 2)",
+            "Select up to two",
             options=["Technology tilt (+5%)", "Income tilt (+5%)", "Inflation hedge (+5%)"],
         )[:2]
 
@@ -571,7 +592,7 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
         color="Scenario",
         markers=True,
         template="plotly_dark",
-        color_discrete_map={"Bear": "#ff6b6b", "Base": "#4dabf7", "Bull": "#51cf66"},
+        color_discrete_map={"Bear": "#ff6b6b", "Base": "#f8f9fa", "Bull": "#51cf66"},
     )
     scenario_fig.update_layout(margin=dict(l=10, r=10, t=35, b=10), title="Projected portfolio paths by scenario")
     st.plotly_chart(scenario_fig, use_container_width=True)
