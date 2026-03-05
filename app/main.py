@@ -13,6 +13,7 @@ for p in (str(ROOT), str(SRC)):
 import io
 import json
 import datetime as dt
+from collections import OrderedDict
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -232,6 +233,13 @@ from src.visuals     import (
 # --------------------------------------------------------------------------
 st.sidebar.header("Parameters")
 
+TICKER_PRESETS = OrderedDict({
+    "Balanced Multi-Asset": ["SPY", "QQQ", "IWM", "EFA", "EEM", "TLT", "LQD", "GLD", "USO", "AAPL", "MSFT"],
+    "Global Equity Core": ["SPY", "QQQ", "IWM", "VEA", "VWO", "AAPL", "MSFT", "GOOG", "AMZN"],
+    "Defensive Mix": ["SPY", "XLV", "XLP", "XLU", "TLT", "IEF", "LQD", "GLD"],
+    "Growth & Tech": ["QQQ", "XLK", "SMH", "AAPL", "MSFT", "GOOG", "AMZN", "META"],
+})
+
 def t(en: str) -> str:
     return en
 
@@ -245,14 +253,38 @@ def section_header(title: str, info_md: str) -> None:
         with st.popover("ⓘ"):
             st.markdown(info_md)
 
+def _sanitize_tickers(raw: str) -> tuple[list[str], list[str]]:
+    parsed = [t.strip().upper() for t in raw.split(",") if t.strip()]
+    seen = set()
+    clean = []
+    duplicates = []
+    for t in parsed:
+        if t in seen:
+            duplicates.append(t)
+            continue
+        seen.add(t)
+        clean.append(t)
+    return clean, duplicates
+
 # (a) tickers & date range
 default_tickers = "SPY, QQQ, IWM, EFA, EEM, TLT, LQD, GLD, USO, AAPL, MSFT"
+with st.sidebar.expander("Quick ticker presets", expanded=False):
+    preset_name = st.selectbox("Preset", list(TICKER_PRESETS.keys()), index=0)
+    st.caption(", ".join(TICKER_PRESETS[preset_name]))
+    if st.button("Apply preset", use_container_width=True):
+        st.session_state["tickers_str"] = ", ".join(TICKER_PRESETS[preset_name])
+        st.rerun()
+
 tickers_str = st.sidebar.text_input(
     "Tickers (comma-separated) from Yahoo Finance",
     value=default_tickers,
     key="tickers_str",
 )
-tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
+tickers, duplicate_tickers = _sanitize_tickers(tickers_str)
+if duplicate_tickers:
+    st.sidebar.info(f"Removed duplicate tickers: {', '.join(sorted(set(duplicate_tickers)))}")
+if len(tickers) > 16:
+    st.sidebar.warning("More than 16 tickers can make charts crowded and slower.")
 
 date_range = st.sidebar.date_input(
     "Date range",
@@ -310,7 +342,8 @@ if len(tickers) < 2:
 try:
     start = pd.to_datetime(date_range[0])
     end = pd.to_datetime(date_range[1])
-    px_df = fetch_prices(tickers, start=start, end=end)   # Adj Close, index=Date
+    with st.spinner("Loading market data..."):
+        px_df = fetch_prices(tickers, start=start, end=end)   # Adj Close, index=Date
     if px_df is None or px_df.empty:
         st.error("No price data returned.")
         st.stop()
@@ -324,6 +357,15 @@ ret = to_returns(px_df)                         # daily returns
 summary = compute_summary(px_df, rf=rf/100.0)   # annualized
 cm = ret.corr().astype(float)                   # correlation matrix
 vol_roll = rolling_vol(ret, window=window)      # rolling annualized vol
+
+# Quick context KPIs
+missing_pct = float(px_df.isna().sum().sum() / max(px_df.shape[0] * px_df.shape[1], 1))
+days_loaded = int(px_df.shape[0])
+assets_loaded = int(px_df.shape[1])
+kpi_a, kpi_b, kpi_c = st.columns(3)
+kpi_a.metric("Assets loaded", f"{assets_loaded}")
+kpi_b.metric("History length", f"{days_loaded} days")
+kpi_c.metric("Missing data", f"{missing_pct:.2%}")
 
 # --------------------------------------------------------------------------
 # Tabs
@@ -539,15 +581,22 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
         st.markdown("**Historical performance of this optimized portfolio**")
         hist_nav = _historical_nav_from_weights(px_df, mv_weights, initial_value=100.0)
         if not hist_nav.empty:
-            hist_df = _with_date(hist_nav)
-            fig_hist = px.line(hist_df, x="Date", y="nav", template="plotly_dark")
+            bench_col = "SPY" if "SPY" in px_df.columns else px_df.columns[0]
+            bench = (px_df[bench_col].dropna() / px_df[bench_col].dropna().iloc[0]) * 100.0
+            compare = pd.concat(
+                [hist_nav["nav"].rename("MV Portfolio"), bench.rename(bench_col)],
+                axis=1,
+                join="inner",
+            ).dropna()
+            fig_hist = px.line(_with_date(compare), x="Date", y=compare.columns, template="plotly_dark")
             fig_hist.update_layout(
-                title=dict(text="Historical NAV (static optimized weights)", font=dict(size=16)),
+                title=dict(text=f"Historical NAV (vs {bench_col})", font=dict(size=16)),
                 margin=dict(l=10, r=10, t=50, b=10),
             )
             fig_hist.update_xaxes(title="")
             fig_hist.update_yaxes(title="NAV (base 100)")
             st.plotly_chart(fig_hist, use_container_width=True)
+            st.caption("Static-weight backtest from selected start date. Benchmark is SPY if included, otherwise first ticker.")
 
             nav_s = hist_nav["nav"].astype(float)
             years = max(len(nav_s) / 252.0, 1e-9)
@@ -559,6 +608,18 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
             hh1.metric("Total return", f"{total_ret:.2%}")
             hh2.metric("CAGR", f"{cagr:.2%}")
             hh3.metric("Max drawdown", f"{max_dd:.2%}")
+            dd_fig = px.area(
+                _with_date(drawdown.to_frame(name="drawdown")),
+                x="Date",
+                y="drawdown",
+                template="plotly_dark",
+            )
+            dd_fig.update_layout(
+                title=dict(text="Portfolio drawdown", font=dict(size=15)),
+                margin=dict(l=10, r=10, t=45, b=10),
+            )
+            dd_fig.update_yaxes(tickformat=".1%")
+            st.plotly_chart(dd_fig, use_container_width=True)
         else:
             st.info("Not enough data to compute historical portfolio performance.")
 
@@ -602,6 +663,21 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
         k2.metric("Volatility (MV)", f"{mv_kpi['vol']:.2%}")
         k3.metric("Sharpe (MV)", f"{mv_kpi['sharpe']:.2f}")
 
+        mv_tbl = mv_weights.sort_values(ascending=False).rename("Weight").to_frame()
+        st.markdown("**MV weights table**")
+        st.dataframe(
+            (mv_tbl * 100.0).rename(columns={"Weight": "Weight (%)"}).style.format({"Weight (%)": "{:.2f}"}),
+            use_container_width=True,
+        )
+        st.download_button(
+            "Download MV weights CSV",
+            data=mv_tbl.to_csv().encode(),
+            file_name="mv_weights.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="dl_mv_weights",
+        )
+
         if show_frontier:
             fr_raw = _compute_frontier(
                 px_df, rf=rf/100.0, n_points=frontier_points,
@@ -643,6 +719,15 @@ Useful when downside risk matters more than symmetric volatility.
         st.plotly_chart(
             weights_donut(cv_weights, title="Portfolio Weights (CVaR)"),
             use_container_width=True
+        )
+        cv_tbl = cv_weights.sort_values(ascending=False).rename("Weight").to_frame()
+        st.download_button(
+            "Download CVaR weights CSV",
+            data=cv_tbl.to_csv().encode(),
+            file_name="cvar_weights.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="dl_cvar_weights",
         )
 
         if isinstance(cv_out, dict) and "curve" in cv_out and isinstance(cv_out["curve"], pd.DataFrame):
