@@ -77,6 +77,12 @@ div[data-baseweb="layer"] [role="listbox"] {
   border: 1px solid #2a2f3a !important;
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.45) !important;
 }
+div[data-baseweb="popover"] [role="listbox"] * ,
+div[data-baseweb="menu"] * ,
+div[data-baseweb="layer"] [role="listbox"] * {
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+}
 div[data-baseweb="popover"] [role="option"],
 div[data-baseweb="popover"] [role="option"] *,
 div[data-baseweb="popover"] li,
@@ -88,8 +94,10 @@ div[data-baseweb="layer"] [role="option"] *,
 div[data-baseweb="layer"] li,
 div[data-baseweb="layer"] li * {
   color: #f8fafc !important;
-  background-color: transparent !important;
+  -webkit-text-fill-color: #f8fafc !important;
+  background-color: #0e1117 !important;
   opacity: 1 !important;
+  text-shadow: none !important;
 }
 div[data-baseweb="popover"] [role="option"]:hover,
 div[data-baseweb="popover"] li:hover,
@@ -97,6 +105,8 @@ div[data-baseweb="menu"] [role="option"]:hover,
 div[data-baseweb="layer"] [role="option"]:hover,
 div[data-baseweb="layer"] li:hover {
   background-color: #1a1f2b !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
 }
 div[data-baseweb="popover"] [role="option"][aria-selected="true"],
 div[data-baseweb="popover"] li[aria-selected="true"],
@@ -104,6 +114,8 @@ div[data-baseweb="menu"] [role="option"][aria-selected="true"],
 div[data-baseweb="layer"] [role="option"][aria-selected="true"],
 div[data-baseweb="layer"] li[aria-selected="true"] {
   background-color: #202635 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
 }
 </style>
 """, unsafe_allow_html=True)
