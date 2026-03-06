@@ -1,76 +1,50 @@
 # Quant Insight Dashboard
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://quant-insight-dashboard-ing3uxvvrggk7hntnbcg5r.streamlit.app/)
-[![Open App](https://img.shields.io/badge/Open%20App-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://quant-insight-dashboard-ing3uxvvrggk7hntnbcg5r.streamlit.app/)
 
-Interactive Streamlit app to analyze **performance, volatility, correlation, portfolio optimization, and beta** for any set of tickers (stocks/ETFs).
+Quant Insight Dashboard is a Streamlit app focused on two main jobs:
+- beginner-friendly portfolio construction
+- practical ticker and portfolio analysis
 
----
+## Main Features
 
-## ✨ Features
+- Guided `Build Your First Portfolio` workflow (profile, capital plan, goal check, starter allocation)
+- Ticker analytics: prices, cumulative performance, risk/return summary, rolling volatility, correlations
+- Portfolio optimization: Max Sharpe, Min Vol, Target Return, CVaR
+- Efficient frontier visualization and allocation diagnostics
+- Dynamic backtest (rolling/EWMA estimation, shrinkage, turnover, costs)
+- Monte Carlo simulation for forward scenario ranges
+- Data export: prices, correlation, optimizer outputs, HTML report
 
-- **Performance**: Cumulative returns, KPI cards, Sharpe–Volatility scatter  
-- **Volatility**: Rolling annualized volatility (custom window)  
-- **Correlation**: Ordered heatmap + Top Positive/Negative pairs + Pairwise rolling correlation  
-- **Portfolio Optimization**: Efficient frontier, weight caps, sector limits, rebalancing options  
-- **Beta**: Rolling CAPM beta vs selected benchmark (default: SPY)  
-- **Export**: CSV and one-click HTML report  
-- **Presets**: Quick ticker sets (US Tech, Benchmarks, FAANG+)  
-- **Save/Load**: Export/import configuration JSON  
-- **Caching**: Fast reloads with Streamlit cache  
-- **Testing & CI**: `pytest` + GitHub Actions for reproducibility  
-
----
-
-## 🚀 Quickstart
+## Local Quickstart
 
 ```bash
 git clone https://github.com/riccardo-ugo-alberti/quant-insight-dashboard.git
 cd quant-insight-dashboard
-uv python install 3.12
-uv venv --python 3.12 .venv
-.venv\\Scripts\\activate       # Windows
+python -m venv .venv
+.venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 streamlit run app/main.py
 ```
 
----
+## Streamlit Cloud
 
-## Streamlit Cloud Deploy
+- Repository: `riccardo-ugo-alberti/quant-insight-dashboard`
+- Branch: `main`
+- Main file path: `streamlit_app.py`
 
-The previous public app URL is no longer active (returns 404).  
-Deploy/redeploy from Streamlit Cloud using:
+## Project Structure
 
-1. Repository: `riccardo-ugo-alberti/quant-insight-dashboard`
-2. Branch: `main`
-3. Main file path: `streamlit_app.py`
+- `app/main.py`: main Streamlit app
+- `src/data_loader.py`: Yahoo Finance data loader
+- `src/analytics.py`: metrics, rolling stats, simulations
+- `src/optimizer.py`: MV and CVaR optimization
+- `src/backtest/`: dynamic backtest engine and configs
+- `src/visuals.py`: Plotly chart builders
+- `src/report.py`: HTML report generation
 
-Live app: `https://quant-insight-dashboard-ing3uxvvrggk7hntnbcg5r.streamlit.app/`
+## Notes
 
----
-
-
-## 🧭 Step 0 Optimization Review
-
-We documented a focused step-zero optimization assessment and priorities here:
-
-- [`docs/step-zero-optimization-review.md`](docs/step-zero-optimization-review.md)
-
-
-## 🛠️ Optimizer Developer Notes
-
-- Use `optimize_portfolio(...)`, `frontier_from_prices(...)`, and `optimize_cvar(...)` when your input is **prices**.
-- Use `optimize_portfolio_from_returns(...)`, `frontier_from_returns(...)`, and `optimize_cvar_from_returns(...)` when your input is **daily returns**.
-- Avoid implicit mixing of data contracts (do not pass returns to price entrypoints).
-
-
-
-## Environment note (Windows)
-
-If you see:
-
-`ImportError: Error importing numpy ... you should not try to import numpy from its source directory`
-
-your virtual environment is usually built with the wrong Python ABI (for example Python 3.14 with NumPy wheels for 3.12). Recreate the venv with Python 3.12 and reinstall requirements.
-
-
+- Use price-based optimizer entrypoints with price data (`optimize_portfolio`, `frontier_from_prices`, `optimize_cvar`).
+- Use returns-based entrypoints only with daily returns data.
+- If CVaR is unavailable in your environment, the app automatically falls back to MV options.

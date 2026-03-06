@@ -353,7 +353,7 @@ with st.sidebar.expander("Save / Load setup", expanded=False):
 # Data fetch
 # --------------------------------------------------------------------------
 st.title("Quant Insight Dashboard")
-st.caption("Performance, risk and correlations for selected tickers/ETFs.")
+st.caption("Beginner-first portfolio building and practical ticker/portfolio analytics.")
 
 if len(tickers) < 2:
     st.info("Enter at least two tickers to start.")
@@ -934,15 +934,15 @@ This makes returns more comparable over long periods.
     st.plotly_chart(prices_chart(px_df), use_container_width=True)
     st.caption("Adjusted for dividends/splits. Table shows the latest rows (most recent on top).")
 
-    # 1) garantisci indice datetime
+    # 1) Ensure a datetime index
     df_show = px_df.copy()
     df_show.index = pd.to_datetime(df_show.index)
 
-    # 2) ordina crescente -> prendi le ultime N -> ribalta l'ordine
-    N = 5  # cambia se vuoi più/meno righe
+    # 2) Sort ascending -> take last N rows -> reverse for latest-first display
+    N = 5  # Change this value to show more/fewer rows
     df_show = df_show.sort_index(ascending=True).tail(N).iloc[::-1]
 
-    # 3) (opzionale) porta la data come colonna visibile
+    # 3) Optional: expose date as a visible column
     df_show = df_show.reset_index().rename(columns={"index": "Date"})
 
     st.dataframe(df_show, use_container_width=True)
@@ -1087,7 +1087,7 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
 
     # === Optimization mode (dark-mode friendly) ===
     _options = ["max_sharpe", "min_vol", "target_return"]
-    # etichetta palese per capire se il codice è quello nuovo
+    # Use segmented control when available, fallback to radio for compatibility
     try:
        mode = st.segmented_control("Optimization mode", options=_options, default="max_sharpe")
     except Exception:
