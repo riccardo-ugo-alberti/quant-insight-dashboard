@@ -623,21 +623,134 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     )
     st.dataframe(scenario_outcomes, use_container_width=True, hide_index=True)
 
-    starter_universe = list(model["example_tickers"])
-    if "Technology tilt (+5%)" in tilts:
-        starter_universe.extend(["SMH", "XLK"])
-    if "Income tilt (+5%)" in tilts:
-        starter_universe.extend(["SCHD", "VIG"])
-    if "Inflation hedge (+5%)" in tilts:
-        starter_universe.extend(["IAU", "DBC"])
-    if risk_profile != "Conservative":
-        starter_universe.extend(["VEA", "VWO"])
+    # Criteria-driven starter universe (deterministic, no random picks)
+    ticker_meta = {
+        "VT": {"bucket": "Global Equity"},
+        "SPY": {"bucket": "Global Equity"},
+        "QQQ": {"bucket": "Thematic"},
+        "VEA": {"bucket": "Global Equity"},
+        "VWO": {"bucket": "Global Equity"},
+        "BND": {"bucket": "Bonds"},
+        "IEF": {"bucket": "Bonds"},
+        "TLT": {"bucket": "Bonds"},
+        "GLD": {"bucket": "Gold"},
+        "IAU": {"bucket": "Gold"},
+        "SMH": {"bucket": "Thematic"},
+        "XLK": {"bucket": "Thematic"},
+        "SCHD": {"bucket": "Dividend"},
+        "VIG": {"bucket": "Dividend"},
+        "DBC": {"bucket": "Gold"},
+    }
+    bucket_candidates = {
+        "Global Equity": ["VT", "SPY", "VEA", "VWO"],
+        "Bonds": ["BND", "IEF", "TLT"],
+        "Gold": ["GLD", "IAU", "DBC"],
+        "Thematic": ["QQQ", "SMH", "XLK"],
+        "Dividend": ["SCHD", "VIG"],
+    }
 
-    dedup_universe = []
-    for ticker in starter_universe:
-        if ticker not in dedup_universe:
-            dedup_universe.append(ticker)
-    starter_universe = dedup_universe[:n_positions]
+    score = {t: 0.0 for t in ticker_meta}
+    # Profile priorities
+    if risk_profile == "Conservative":
+        for t in ["BND", "IEF", "TLT", "GLD", "IAU", "SCHD", "VIG", "VT"]:
+            score[t] += 2.0
+        for t in ["QQQ", "SMH", "XLK", "VWO"]:
+            score[t] -= 2.0
+    elif risk_profile == "Balanced":
+        for t in ["VT", "SPY", "BND", "GLD", "VEA"]:
+            score[t] += 1.5
+    else:  # Growth
+        for t in ["QQQ", "SMH", "XLK", "SPY", "VT", "VWO"]:
+            score[t] += 2.0
+        for t in ["TLT", "IEF"]:
+            score[t] -= 1.0
+
+    # Objective and horizon consistency
+    if objective == "Capital preservation":
+        for t in ["BND", "IEF", "TLT", "GLD", "IAU", "SCHD"]:
+            score[t] += 2.0
+    elif objective == "Steady growth":
+        for t in ["VT", "SPY", "BND", "VEA"]:
+            score[t] += 1.2
+    else:  # Max growth
+        for t in ["QQQ", "SMH", "XLK", "VWO", "SPY"]:
+            score[t] += 2.2
+
+    if horizon_years == "0-3 years":
+        for t in ["BND", "IEF", "TLT", "GLD"]:
+            score[t] += 1.8
+        for t in ["SMH", "QQQ", "VWO"]:
+            score[t] -= 1.0
+    elif horizon_years == "7+ years":
+        for t in ["VT", "SPY", "QQQ", "VEA", "VWO", "SMH"]:
+            score[t] += 1.0
+
+    # Tilt alignment
+    if "Technology tilt (+5%)" in tilts:
+        for t in ["QQQ", "SMH", "XLK"]:
+            score[t] += 4.0
+    if "Income tilt (+5%)" in tilts:
+        for t in ["SCHD", "VIG", "BND"]:
+            score[t] += 3.0
+    if "Inflation hedge (+5%)" in tilts:
+        for t in ["GLD", "IAU", "DBC"]:
+            score[t] += 3.0
+
+    # Build target counts by bucket from dynamic allocation
+    target_by_bucket = {}
+    for bucket, w in allocation.items():
+        if w <= 0:
+            continue
+        base_n = int(round((w / 100.0) * n_positions))
+        target_by_bucket[bucket] = max(1, base_n)
+
+    # Enforce bond floor directly in ticker count
+    min_bond_positions = int(np.ceil((float(min_bond_floor) / 100.0) * n_positions))
+    target_by_bucket["Bonds"] = max(target_by_bucket.get("Bonds", 1), min_bond_positions)
+
+    # Conservative profile avoids EM by default unless max growth selected
+    if risk_profile == "Conservative" and objective != "Max growth":
+        score["VWO"] -= 3.0
+
+    selected = []
+    # First pass: fill by bucket priority
+    bucket_priority = sorted(
+        target_by_bucket.keys(),
+        key=lambda b: target_by_bucket.get(b, 0),
+        reverse=True,
+    )
+    for bucket in bucket_priority:
+        candidates = bucket_candidates.get(bucket, [])
+        ranked = sorted(candidates, key=lambda t: score.get(t, 0.0), reverse=True)
+        need = target_by_bucket.get(bucket, 0)
+        for t in ranked:
+            if need <= 0 or len(selected) >= n_positions:
+                break
+            if t not in selected:
+                selected.append(t)
+                need -= 1
+
+    # Second pass: fill remaining slots by global score
+    ranked_all = sorted(score.keys(), key=lambda t: score[t], reverse=True)
+    for t in ranked_all:
+        if len(selected) >= n_positions:
+            break
+        if t not in selected:
+            selected.append(t)
+
+    starter_universe = selected[:n_positions]
+
+    # Explain criteria used for transparency
+    selection_df = pd.DataFrame(
+        [
+            {
+                "Ticker": t,
+                "Bucket": ticker_meta[t]["bucket"],
+                "Score": round(score[t], 1),
+            }
+            for t in starter_universe
+        ]
+    ).sort_values("Score", ascending=False)
 
     mcol1, mcol2 = st.columns([0.62, 0.38])
     with mcol1:
@@ -662,6 +775,11 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
             st.session_state["tickers_str"] = ", ".join(starter_universe)
             st.session_state["guide_max_weight_hint"] = max_single / 100.0
             st.rerun()
+    with st.expander("Starter universe criteria (why these tickers)"):
+        st.caption(
+            "Selection is deterministic and driven by your profile, objective, horizon, tilts, concentration target, and bond-floor constraint."
+        )
+        st.dataframe(selection_df, use_container_width=True, hide_index=True)
 
     progress_df = pd.DataFrame(
         {
