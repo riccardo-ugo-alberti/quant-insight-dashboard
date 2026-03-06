@@ -791,6 +791,23 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
         ]
     ).sort_values("Score", ascending=False)
 
+    # Build a concrete implementation blueprint: per-ticker target weights from bucket weights.
+    blueprint_weights = {}
+    for bucket, bucket_weight in allocation.items():
+        if bucket_weight <= 0:
+            continue
+        bucket_tickers = [t for t in starter_universe if ticker_meta[t]["bucket"] == bucket]
+        if not bucket_tickers:
+            continue
+        per_ticker_weight = (bucket_weight / 100.0) / len(bucket_tickers)
+        for t in bucket_tickers:
+            blueprint_weights[t] = per_ticker_weight
+    blueprint_series = pd.Series(blueprint_weights, dtype=float)
+    if not blueprint_series.empty and blueprint_series.sum() > 0:
+        blueprint_series = blueprint_series / blueprint_series.sum()
+    st.session_state["guide_blueprint_weights"] = blueprint_series.to_dict()
+    st.session_state["guide_starter_universe"] = starter_universe
+
     mcol1, mcol2 = st.columns([0.62, 0.38])
     with mcol1:
         alloc_df = pd.DataFrame(
@@ -823,6 +840,23 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
             "Selection is deterministic and driven by your profile, objective, horizon, tilts, concentration target, and bond-floor constraint."
         )
         st.dataframe(selection_df, use_container_width=True, hide_index=True)
+    with st.expander("Portfolio blueprint (target per ticker)"):
+        if blueprint_series.empty:
+            st.info("Blueprint not available for the current setup.")
+        else:
+            blueprint_df = (
+                blueprint_series.sort_values(ascending=False)
+                .rename("Target weight")
+                .to_frame()
+                .reset_index()
+                .rename(columns={"index": "Ticker"})
+            )
+            blueprint_df["Target weight (%)"] = blueprint_df["Target weight"] * 100.0
+            st.dataframe(
+                blueprint_df[["Ticker", "Target weight (%)"]].style.format({"Target weight (%)": "{:.2f}"}),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     progress_df = pd.DataFrame(
         {
@@ -1134,6 +1168,49 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
                 if gx2.button("Hide tiny weights (raise threshold)", key="opt_auto_raise_threshold", use_container_width=True):
                     st.session_state["pending_opt_active_threshold"] = min(2.0, float(min_display_weight_pct) + 0.05)
                     st.rerun()
+
+        # Alignment between Build blueprint and Optimizer output
+        guide_blueprint = st.session_state.get("guide_blueprint_weights")
+        if isinstance(guide_blueprint, dict) and len(guide_blueprint) > 0:
+            bp = pd.Series(guide_blueprint, dtype=float)
+            bp = bp[bp > 0]
+            if not bp.empty:
+                bp = bp / bp.sum()
+                mv_norm = mv_weights.clip(lower=0.0)
+                if mv_norm.sum() > 0:
+                    mv_norm = mv_norm / mv_norm.sum()
+                    universe = bp.index.union(mv_norm.index)
+                    bp_u = bp.reindex(universe).fillna(0.0)
+                    mv_u = mv_norm.reindex(universe).fillna(0.0)
+                    drift = float(0.5 * (bp_u - mv_u).abs().sum())
+                    overlap = len(set(bp.index).intersection(set(display_mv.index)))
+                    align1, align2, align3 = st.columns(3)
+                    align1.metric("Blueprint overlap", f"{overlap}/{len(bp.index)}")
+                    align2.metric("Weight drift vs blueprint", f"{drift:.1%}")
+                    align3.metric("Alignment score", f"{(1.0 - drift):.1%}")
+                    if drift > 0.35:
+                        st.info(
+                            "Optimizer output is materially different from the Build blueprint. "
+                            "This can be valid, but review constraints and assumptions before implementation."
+                        )
+                    with st.expander("Build vs Optimizer comparison"):
+                        cmp = pd.DataFrame(
+                            {
+                                "Build target (%)": bp_u * 100.0,
+                                "Optimizer weight (%)": mv_u * 100.0,
+                                "Difference (pp)": (mv_u - bp_u) * 100.0,
+                            }
+                        ).sort_values("Build target (%)", ascending=False)
+                        st.dataframe(
+                            cmp.style.format(
+                                {
+                                    "Build target (%)": "{:.2f}",
+                                    "Optimizer weight (%)": "{:.2f}",
+                                    "Difference (pp)": "{:+.2f}",
+                                }
+                            ),
+                            use_container_width=True,
+                        )
 
         st.plotly_chart(
             weights_donut(display_mv, title="Portfolio Weights (MV)"),
