@@ -394,6 +394,9 @@ tab_guide, tab_prices, tab_perf, tab_vol, tab_corr, tab_opt, tab_backtest, tab_e
 # Build your first portfolio
 # --------------------------------------------------------------------------
 with tab_guide:
+    def _fmt_eur(value: float) -> str:
+        return f"€{value:,.0f}"
+
     section_header(
         "Build Your First Portfolio (Beginner Guide)",
         """
@@ -426,10 +429,10 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     st.markdown("#### 2) Capital Plan")
     c_plan_1, c_plan_2 = st.columns(2)
     with c_plan_1:
-        initial_capital = st.number_input("Initial capital ($)", min_value=0, value=20000, step=1000)
-        monthly_contribution = st.number_input("Monthly contribution ($)", min_value=0, value=600, step=50)
+        initial_capital = st.number_input("Initial capital (€)", min_value=0, value=20000, step=1000)
+        monthly_contribution = st.number_input("Monthly contribution (€)", min_value=0, value=600, step=50)
     with c_plan_2:
-        target_goal = st.number_input("Target value ($)", min_value=1000, value=150000, step=5000)
+        target_goal = st.number_input("Target value (€)", min_value=1000, value=150000, step=5000)
         min_bond_floor = st.slider("Min bond floor (%)", min_value=5, max_value=60, value=20, step=5)
 
     st.markdown("#### 3) Optional Tilts")
@@ -541,24 +544,34 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     monthly_gap = float(monthly_contribution) - required_monthly
     preferred_rebalance = {"Monthly": "every month", "Quarterly": "every 3 months", "Semi-annual": "every 6 months"}[rebalance_preference]
 
-    st.success(
-        f"Suggested setup for **{risk_profile}** profile ({objective.lower()}, {horizon_years}): "
-        f"rebalance {preferred_rebalance}, target {n_positions} positions, keep max single position around {max_single}%."
-    )
+    sg1, sg2 = st.columns([0.82, 0.18])
+    with sg1:
+        st.success(
+            f"Suggested setup for **{risk_profile}** profile ({objective.lower()}, {horizon_years}): "
+            f"rebalance {preferred_rebalance}, target {n_positions} positions, keep max single position around {max_single}%."
+        )
+    with sg2:
+        apply_suggested_now = st.button(
+            "Use these options",
+            key="apply_suggested_now",
+            use_container_width=True,
+        )
 
     kk1, kk2, kk3, kk4 = st.columns(4)
     kk1.metric("Est. annual return", f"{est_return:.1%}")
     kk2.metric("Est. annual volatility", f"{est_vol:.1%}")
-    kk3.metric(f"Projection ({years}y)", f"${projected_value:,.0f}")
+    kk3.metric(f"Projection ({years}y)", _fmt_eur(projected_value))
     kk4.metric("Goal coverage", f"{goal_coverage:.1%}")
     kg1, kg2, kg3 = st.columns(3)
-    kg1.metric("Required monthly", f"${required_monthly:,.0f}")
-    kg2.metric("Your monthly gap", f"${monthly_gap:,.0f}")
+    kg1.metric("Required monthly", _fmt_eur(required_monthly))
+    kg2.metric("Your monthly gap", _fmt_eur(monthly_gap))
     kg3.metric("Rebalance plan", preferred_rebalance.replace("every ", ""))
+    st.progress(float(min(max(goal_coverage, 0.0), 1.0)))
+    st.caption("Goal progress under base-return assumptions.")
 
     if goal_coverage < 0.9:
         st.warning(
-            f"Current plan may miss the target. To improve probability, increase monthly contribution to about ${required_monthly:,.0f}, extend horizon, or lower target."
+            f"Current plan may miss the target. To improve probability, increase monthly contribution to about {_fmt_eur(required_monthly)}, extend horizon, or lower target."
         )
     elif goal_coverage > 1.2:
         st.info("Current plan is ahead of target assumptions. You can keep this setup or reduce risk concentration.")
@@ -616,19 +629,19 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
             {
                 "Scenario": "Bear",
                 "Assumed return": f"{bear_return:.1%}",
-                "Projected value": f"${bear_final:,.0f}",
+                "Projected value": _fmt_eur(bear_final),
                 "Goal coverage": f"{(bear_final / max(float(target_goal), 1.0)):.1%}",
             },
             {
                 "Scenario": "Base",
                 "Assumed return": f"{base_return:.1%}",
-                "Projected value": f"${base_final:,.0f}",
+                "Projected value": _fmt_eur(base_final),
                 "Goal coverage": f"{(base_final / max(float(target_goal), 1.0)):.1%}",
             },
             {
                 "Scenario": "Bull",
                 "Assumed return": f"{bull_return:.1%}",
-                "Projected value": f"${bull_final:,.0f}",
+                "Projected value": _fmt_eur(bull_final),
                 "Goal coverage": f"{(bull_final / max(float(target_goal), 1.0)):.1%}",
             },
         ]
@@ -787,6 +800,10 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
             _queue_tickers_update(starter_universe)
             st.session_state["guide_max_weight_hint"] = max_single / 100.0
             st.rerun()
+    if apply_suggested_now:
+        _queue_tickers_update(starter_universe)
+        st.session_state["guide_max_weight_hint"] = max_single / 100.0
+        st.rerun()
     with st.expander("Starter universe criteria (why these tickers)"):
         st.caption(
             "Selection is deterministic and driven by your profile, objective, horizon, tilts, concentration target, and bond-floor constraint."
@@ -803,7 +820,7 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
                 "Ready",
             ],
             "Action": [
-                f"Target ${target_goal:,.0f} in about {years} years",
+                f"Target {_fmt_eur(target_goal)} in about {years} years",
                 f"{risk_profile} base with {len(tilts)} optional tilts",
                 f"Max single {max_single}%, min bonds {min_bond_floor}%",
                 "Open Optimizer and Dynamic Backtest tabs",
