@@ -261,13 +261,24 @@ def _sanitize_tickers(raw: str) -> tuple[list[str], list[str]]:
         clean.append(t)
     return clean, duplicates
 
+
+def _queue_tickers_update(tickers_value: str | list[str]) -> None:
+    """Queue ticker text update to apply before the sidebar widget is created."""
+    if isinstance(tickers_value, list):
+        st.session_state["pending_tickers_str"] = ", ".join(tickers_value)
+    else:
+        st.session_state["pending_tickers_str"] = str(tickers_value)
+
 # (a) tickers & date range
 default_tickers = "SPY, QQQ, IWM, EFA, EEM, TLT, LQD, GLD, USO, AAPL, MSFT"
+if "pending_tickers_str" in st.session_state:
+    st.session_state["tickers_str"] = st.session_state.pop("pending_tickers_str")
+
 with st.sidebar.expander("Quick ticker presets", expanded=False):
     preset_name = st.selectbox("Preset", list(TICKER_PRESETS.keys()), index=0)
     st.caption(", ".join(TICKER_PRESETS[preset_name]))
     if st.button("Apply preset", use_container_width=True):
-        st.session_state["tickers_str"] = ", ".join(TICKER_PRESETS[preset_name])
+        _queue_tickers_update(TICKER_PRESETS[preset_name])
         st.rerun()
 
 tickers_str = st.sidebar.text_input(
@@ -317,10 +328,11 @@ with st.sidebar.expander("Save / Load setup", expanded=False):
     if up is not None:
         try:
             cfg_in = json.load(io.BytesIO(up.read()))
-            st.session_state["tickers_str"] = ", ".join(cfg_in.get("tickers", tickers))
+            _queue_tickers_update(cfg_in.get("tickers", tickers))
             if "rf" in cfg_in: rf = float(cfg_in["rf"])
             if "window" in cfg_in: window = int(cfg_in["window"])
-            st.success("Configuration loaded. Adjust other widgets if needed and rerun.")
+            st.success("Configuration loaded.")
+            st.rerun()
         except Exception as e:
             st.warning(f"Could not load JSON: {e}")
 
@@ -769,10 +781,10 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     with mcol2:
         st.info("**Starter universe**\n\n" + ", ".join(starter_universe))
         if st.button("Use this starter universe in sidebar", key="apply_starter_universe", use_container_width=True):
-            st.session_state["tickers_str"] = ", ".join(starter_universe)
+            _queue_tickers_update(starter_universe)
             st.rerun()
         if st.button("Use starter + keep max cap guidance", key="apply_starter_and_guidance", use_container_width=True):
-            st.session_state["tickers_str"] = ", ".join(starter_universe)
+            _queue_tickers_update(starter_universe)
             st.session_state["guide_max_weight_hint"] = max_single / 100.0
             st.rerun()
     with st.expander("Starter universe criteria (why these tickers)"):
