@@ -1234,15 +1234,28 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
                 axis=1,
                 join="inner",
             ).dropna()
-            fig_hist = px.line(_with_date(compare), x="Date", y=compare.columns, template="plotly_dark")
-            fig_hist.update_layout(
-                title=dict(text=f"Historical NAV (vs {bench_col})", font=dict(size=16)),
-                margin=dict(l=10, r=10, t=50, b=10),
-            )
-            fig_hist.update_xaxes(title="")
-            fig_hist.update_yaxes(title="NAV (base 100)")
-            st.plotly_chart(fig_hist, use_container_width=True)
-            st.caption("Static-weight backtest from selected start date. Benchmark is SPY if included, otherwise first ticker.")
+            if compare.empty:
+                st.warning("Unable to plot Historical NAV: no overlapping dates between portfolio NAV and benchmark.")
+            else:
+                fig_hist = px.line(
+                    _with_date(compare),
+                    x="Date",
+                    y=compare.columns,
+                    template="plotly_dark",
+                    color_discrete_map={
+                        "MV Portfolio": "#00E5FF",
+                        bench_col: "#FF6B6B",
+                    },
+                )
+                fig_hist.update_traces(line=dict(width=3))
+                fig_hist.update_layout(
+                    title=dict(text=f"Historical NAV (vs {bench_col})", font=dict(size=16)),
+                    margin=dict(l=10, r=10, t=50, b=10),
+                )
+                fig_hist.update_xaxes(title="")
+                fig_hist.update_yaxes(title="NAV (base 100)")
+                st.plotly_chart(fig_hist, use_container_width=True)
+                st.caption("Static-weight backtest from selected start date. Benchmark is SPY if included, otherwise first ticker.")
 
             nav_s = hist_nav["nav"].astype(float)
             years = max(len(nav_s) / 252.0, 1e-9)
