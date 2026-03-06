@@ -405,6 +405,11 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
             ["Diversified (8-12 positions)", "Focused (5-8 positions)", "Core-only (3-5 positions)"],
             index=0,
         )
+        rebalance_preference = st.selectbox(
+            "Rebalance frequency",
+            ["Monthly", "Quarterly", "Semi-annual"],
+            index=1,
+        )
 
     st.markdown("#### 2) Capital Plan")
     c_plan_1, c_plan_2 = st.columns(2)
@@ -510,13 +515,23 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     monthly_rate = (1.0 + est_return) ** (1.0 / 12.0) - 1.0
     if monthly_rate > 0:
         projected_value = initial_capital * (1.0 + monthly_rate) ** months + monthly_contribution * (((1.0 + monthly_rate) ** months - 1.0) / monthly_rate)
+        required_monthly = max(
+            (
+                (float(target_goal) - (float(initial_capital) * (1.0 + monthly_rate) ** months))
+                * monthly_rate
+            ) / max(((1.0 + monthly_rate) ** months - 1.0), 1e-9),
+            0.0,
+        )
     else:
         projected_value = initial_capital + (monthly_contribution * months)
+        required_monthly = max((float(target_goal) - float(initial_capital)) / max(months, 1), 0.0)
     goal_coverage = projected_value / max(float(target_goal), 1.0)
+    monthly_gap = float(monthly_contribution) - required_monthly
+    preferred_rebalance = {"Monthly": "every month", "Quarterly": "every 3 months", "Semi-annual": "every 6 months"}[rebalance_preference]
 
     st.success(
         f"Suggested setup for **{risk_profile}** profile ({objective.lower()}, {horizon_years}): "
-        f"rebalance {model['rebalance'].lower()}, target {n_positions} positions, keep max single position around {max_single}%."
+        f"rebalance {preferred_rebalance}, target {n_positions} positions, keep max single position around {max_single}%."
     )
 
     kk1, kk2, kk3, kk4 = st.columns(4)
@@ -524,6 +539,22 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     kk2.metric("Est. annual volatility", f"{est_vol:.1%}")
     kk3.metric(f"Projection ({years}y)", f"${projected_value:,.0f}")
     kk4.metric("Goal coverage", f"{goal_coverage:.1%}")
+    kg1, kg2, kg3 = st.columns(3)
+    kg1.metric("Required monthly", f"${required_monthly:,.0f}")
+    kg2.metric("Your monthly gap", f"${monthly_gap:,.0f}")
+    kg3.metric("Rebalance plan", preferred_rebalance.replace("every ", ""))
+
+    if goal_coverage < 0.9:
+        st.warning(
+            f"Current plan may miss the target. To improve probability, increase monthly contribution to about ${required_monthly:,.0f}, extend horizon, or lower target."
+        )
+    elif goal_coverage > 1.2:
+        st.info("Current plan is ahead of target assumptions. You can keep this setup or reduce risk concentration.")
+
+    if max_single > 30:
+        st.warning("Concentration is high. Consider tighter max single-position limits in Optimizer.")
+    if horizon_years == "0-3 years" and risk_profile == "Growth":
+        st.warning("Short horizon with growth profile can create high drawdown risk.")
 
     st.markdown("#### Stress Test Scenarios")
     ss1, ss2, ss3 = st.columns(3)
@@ -613,12 +644,23 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
         alloc_df = pd.DataFrame(
             [{"Bucket": k, "Weight %": v} for k, v in allocation.items() if v > 0]
         )
+        alloc_series = pd.Series(
+            {row["Bucket"]: row["Weight %"] / 100.0 for row in alloc_df.to_dict("records")}
+        )
+        st.plotly_chart(
+            weights_donut(alloc_series, title="Suggested Allocation Mix"),
+            use_container_width=True,
+        )
         st.dataframe(alloc_df, use_container_width=True, hide_index=True)
         st.caption("Allocation is dynamically adjusted by horizon, objective, tilts, and bond floor.")
     with mcol2:
         st.info("**Starter universe**\n\n" + ", ".join(starter_universe))
         if st.button("Use this starter universe in sidebar", key="apply_starter_universe", use_container_width=True):
             st.session_state["tickers_str"] = ", ".join(starter_universe)
+            st.rerun()
+        if st.button("Use starter + keep max cap guidance", key="apply_starter_and_guidance", use_container_width=True):
+            st.session_state["tickers_str"] = ", ".join(starter_universe)
+            st.session_state["guide_max_weight_hint"] = max_single / 100.0
             st.rerun()
 
     progress_df = pd.DataFrame(
@@ -836,9 +878,13 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
 
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     allow_short = c1.checkbox("Allow shorting", value=False)
-    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=0.30, step=0.05)
+    max_cap_default = float(st.session_state.get("guide_max_weight_hint", 0.30))
+    max_cap_default = float(min(max(max_cap_default, 0.05), 1.00))
+    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=max_cap_default, step=0.05)
     frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1)
     show_frontier = c4.checkbox("Show frontier", value=True)
+    if "guide_max_weight_hint" in st.session_state:
+        st.caption(f"Guide hint applied: max weight cap suggested at {max_cap_default:.0%}.")
 
     # === Optimization mode (dark-mode friendly) ===
     _options = ["max_sharpe", "min_vol", "target_return"]
