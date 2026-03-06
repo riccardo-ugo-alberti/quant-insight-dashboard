@@ -532,6 +532,7 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
         "Core-only (3-5 positions)": (5, 4),
     }
     n_positions, max_single_shift = concentration_map[concentration_style]
+    st.session_state["guide_target_positions"] = int(n_positions)
     max_single = max(10, min(40, model["max_single"] + max_single_shift))
 
     return_adj = {"Capital preservation": -0.01, "Steady growth": 0.0, "Max growth": 0.012}[objective]
@@ -1040,7 +1041,11 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
     allow_short = c1.checkbox("Allow shorting", value=False)
     max_cap_default = float(st.session_state.get("guide_max_weight_hint", 0.30))
     max_cap_default = float(min(max(max_cap_default, 0.05), 1.00))
-    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, value=max_cap_default, step=0.05)
+    if "pending_opt_max_cap" in st.session_state:
+        st.session_state["opt_max_cap"] = float(min(max(st.session_state.pop("pending_opt_max_cap"), 0.05), 1.00))
+    if "opt_max_cap" not in st.session_state:
+        st.session_state["opt_max_cap"] = max_cap_default
+    max_cap = c2.slider("Max weight cap", min_value=0.05, max_value=1.00, step=0.05, key="opt_max_cap")
     frontier_points = c3.slider("Frontier points", min_value=5, max_value=50, value=25, step=1)
     show_frontier = c4.checkbox("Show frontier", value=True)
     if "guide_max_weight_hint" in st.session_state:
@@ -1067,12 +1072,18 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
             "- Apply selected constraints: shorting, caps, etc."
         )
 
+    if "pending_opt_active_threshold" in st.session_state:
+        st.session_state["opt_active_threshold"] = float(
+            min(max(st.session_state.pop("pending_opt_active_threshold"), 0.0), 2.0)
+        )
+    if "opt_active_threshold" not in st.session_state:
+        st.session_state["opt_active_threshold"] = 0.10
     min_display_weight_pct = st.slider(
         "Active holding threshold (%)",
         min_value=0.00,
         max_value=2.00,
-        value=0.10,
         step=0.05,
+        key="opt_active_threshold",
         help="Holdings below this threshold are treated as inactive for implementation views.",
     )
 
@@ -1097,6 +1108,32 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
         impl1.metric("Active holdings", f"{len(display_mv)}")
         impl2.metric("Inactive candidates", f"{len(inactive_mv)}")
         impl3.metric("Active weight share", f"{active_weight_share:.2%}")
+        guide_target_positions = int(st.session_state.get("guide_target_positions", 0))
+        if guide_target_positions > 0:
+            if len(display_mv) < guide_target_positions:
+                st.warning(
+                    f"Active holdings are {len(display_mv)} vs guide target {guide_target_positions}. "
+                    "You can diversify by tightening max-cap or include smaller positions by lowering threshold."
+                )
+                fx1, fx2 = st.columns(2)
+                if fx1.button("Auto-diversify (reduce max cap by 5%)", key="opt_auto_diversify", use_container_width=True):
+                    st.session_state["pending_opt_max_cap"] = max(0.05, float(max_cap) - 0.05)
+                    st.rerun()
+                if fx2.button("Include smaller holdings (lower threshold)", key="opt_auto_lower_threshold", use_container_width=True):
+                    st.session_state["pending_opt_active_threshold"] = max(0.0, float(min_display_weight_pct) - 0.05)
+                    st.rerun()
+            elif len(display_mv) > guide_target_positions + 2:
+                st.info(
+                    f"Active holdings are {len(display_mv)} vs guide target {guide_target_positions}. "
+                    "If you want a cleaner implementation list, increase threshold or allow more concentration."
+                )
+                gx1, gx2 = st.columns(2)
+                if gx1.button("Concentrate (+ increase max cap by 5%)", key="opt_auto_concentrate", use_container_width=True):
+                    st.session_state["pending_opt_max_cap"] = min(1.00, float(max_cap) + 0.05)
+                    st.rerun()
+                if gx2.button("Hide tiny weights (raise threshold)", key="opt_auto_raise_threshold", use_container_width=True):
+                    st.session_state["pending_opt_active_threshold"] = min(2.0, float(min_display_weight_pct) + 0.05)
+                    st.rerun()
 
         st.plotly_chart(
             weights_donut(display_mv, title="Portfolio Weights (MV)"),
