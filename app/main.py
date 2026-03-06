@@ -424,7 +424,14 @@ Set your plan, tune constraints, then apply a curated starter universe in one cl
     st.markdown("#### 1) Investor Profile")
     w1, w2 = st.columns(2)
     with w1:
-        horizon_years = st.selectbox("Investment horizon", ["0-3 years", "3-7 years", "7+ years"], index=2)
+        horizon_years_value = st.slider("Investment horizon (years)", min_value=1, max_value=30, value=10, step=1)
+        if horizon_years_value <= 3:
+            horizon_years = "0-3 years"
+        elif horizon_years_value <= 7:
+            horizon_years = "3-7 years"
+        else:
+            horizon_years = "7+ years"
+        st.caption("Timeline: 1y | 3y | 7y | 10y | 15y | 20y | 30y")
         risk_profile = st.selectbox("Risk profile", ["Conservative", "Balanced", "Growth"], index=1)
     with w2:
         objective = st.selectbox("Main objective", ["Capital preservation", "Steady growth", "Max growth"], index=1)
