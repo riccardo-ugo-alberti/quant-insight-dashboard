@@ -206,6 +206,19 @@ def _historical_nav_from_weights(px_df, weights_series, initial_value: float = 1
     nav = initial_value * (1.0 + port_rets).cumprod()
     return nav.to_frame(name="nav")
 
+
+def _split_active_weights(weights_series: pd.Series, min_weight: float = 0.001) -> tuple[pd.Series, pd.Series]:
+    """Split optimizer output into active and inactive holdings for cleaner UX."""
+    s = weights_series.astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    non_zero = s[s.abs() > 0.0]
+    active = non_zero[non_zero.abs() >= float(min_weight)].sort_values(ascending=False)
+    inactive = non_zero.drop(active.index).sort_values(ascending=False)
+    if active.empty and not non_zero.empty:
+        active = non_zero.sort_values(ascending=False).head(min(len(non_zero), 5))
+        inactive = non_zero.drop(active.index).sort_values(ascending=False)
+    return active, inactive
+
+
 def _with_date(df: pd.DataFrame) -> pd.DataFrame:
     out = df.reset_index()
     first_col = out.columns[0]
@@ -1054,6 +1067,15 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
             "- Apply selected constraints: shorting, caps, etc."
         )
 
+    min_display_weight_pct = st.slider(
+        "Active holding threshold (%)",
+        min_value=0.00,
+        max_value=2.00,
+        value=0.10,
+        step=0.05,
+        help="Holdings below this threshold are treated as inactive for implementation views.",
+    )
+
     # ===== MV optimize =====
     try:
         mv_kwargs = dict(
@@ -1068,11 +1090,25 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
 
         mv_out = optimize_portfolio(**mv_kwargs)
         mv_weights = _as_weights(mv_out)
+        active_mv, inactive_mv = _split_active_weights(mv_weights, min_weight=min_display_weight_pct / 100.0)
+        display_mv = active_mv if not active_mv.empty else mv_weights.sort_values(ascending=False)
+        active_weight_share = float(active_mv.sum()) if not active_mv.empty else float(mv_weights.sum())
+        impl1, impl2, impl3 = st.columns(3)
+        impl1.metric("Active holdings", f"{len(display_mv)}")
+        impl2.metric("Inactive candidates", f"{len(inactive_mv)}")
+        impl3.metric("Active weight share", f"{active_weight_share:.2%}")
+
         st.plotly_chart(
-            weights_donut(mv_weights, title="Portfolio Weights (MV)"),
+            weights_donut(display_mv, title="Portfolio Weights (MV)"),
             use_container_width=True
         )
-        st.caption("Slices below 0.01% are grouped into 'Other' to keep labels readable.")
+        st.caption("Implementation view shows only active holdings above your threshold.")
+        if len(inactive_mv) > 0:
+            with st.expander("Inactive candidates (near zero weights)"):
+                st.dataframe(
+                    (inactive_mv.rename("Weight").to_frame() * 100.0).rename(columns={"Weight": "Weight (%)"}).style.format({"Weight (%)": "{:.4f}"}),
+                    use_container_width=True,
+                )
 
         st.markdown("**Historical performance of this optimized portfolio**")
         hist_nav = _historical_nav_from_weights(px_df, mv_weights, initial_value=100.0)
@@ -1159,19 +1195,27 @@ with constraints such as `sum(w)=1` and per-asset weight bounds.
         k2.metric("Volatility (MV)", f"{mv_kpi['vol']:.2%}")
         k3.metric("Sharpe (MV)", f"{mv_kpi['sharpe']:.2f}")
 
-        mv_tbl = mv_weights.sort_values(ascending=False).rename("Weight").to_frame()
-        st.markdown("**MV weights table**")
+        mv_tbl = display_mv.sort_values(ascending=False).rename("Weight").to_frame()
+        st.markdown("**MV implementation weights table**")
         st.dataframe(
             (mv_tbl * 100.0).rename(columns={"Weight": "Weight (%)"}).style.format({"Weight (%)": "{:.2f}"}),
             use_container_width=True,
         )
         st.download_button(
-            "Download MV weights CSV",
+            "Download MV implementation weights CSV",
             data=mv_tbl.to_csv().encode(),
-            file_name="mv_weights.csv",
+            file_name="mv_weights_implementation.csv",
             mime="text/csv",
             use_container_width=True,
             key="dl_mv_weights",
+        )
+        st.download_button(
+            "Download MV full weights CSV",
+            data=mv_weights.sort_values(ascending=False).rename("Weight").to_frame().to_csv().encode(),
+            file_name="mv_weights_full.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="dl_mv_weights_full",
         )
 
         if show_frontier:
@@ -1212,18 +1256,30 @@ Useful when downside risk matters more than symmetric volatility.
         )
         cv_out = optimize_cvar(**cv_kwargs)
         cv_weights = _as_weights(cv_out)
+        active_cv, inactive_cv = _split_active_weights(cv_weights, min_weight=min_display_weight_pct / 100.0)
+        display_cv = active_cv if not active_cv.empty else cv_weights.sort_values(ascending=False)
         st.plotly_chart(
-            weights_donut(cv_weights, title="Portfolio Weights (CVaR)"),
+            weights_donut(display_cv, title="Portfolio Weights (CVaR)"),
             use_container_width=True
         )
-        cv_tbl = cv_weights.sort_values(ascending=False).rename("Weight").to_frame()
+        if len(inactive_cv) > 0:
+            st.caption(f"CVaR inactive candidates filtered out: {len(inactive_cv)}")
+        cv_tbl = display_cv.sort_values(ascending=False).rename("Weight").to_frame()
         st.download_button(
-            "Download CVaR weights CSV",
+            "Download CVaR implementation weights CSV",
             data=cv_tbl.to_csv().encode(),
-            file_name="cvar_weights.csv",
+            file_name="cvar_weights_implementation.csv",
             mime="text/csv",
             use_container_width=True,
             key="dl_cvar_weights",
+        )
+        st.download_button(
+            "Download CVaR full weights CSV",
+            data=cv_weights.sort_values(ascending=False).rename("Weight").to_frame().to_csv().encode(),
+            file_name="cvar_weights_full.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="dl_cvar_weights_full",
         )
 
         if isinstance(cv_out, dict) and "curve" in cv_out and isinstance(cv_out["curve"], pd.DataFrame):
